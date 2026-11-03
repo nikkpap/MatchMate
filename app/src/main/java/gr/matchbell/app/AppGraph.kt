@@ -55,8 +55,9 @@ class AppGraph private constructor(context: Context) {
                 val data = FeedClient().load(LocalDate.now(Athens))
                 mutex.withLock {
                     val current = mutable.value
+                    // Drop bell / mute / star IDs of broadcasts that left the programme.
                     val snapshot = current.copy(events = if (data == current.events) current.events else data,
-                        lastSync = Instant.now(), loading = false, error = null)
+                        prefs = current.prefs.pruned(data), lastSync = Instant.now(), loading = false, error = null)
                     store.save(snapshot)
                     publish(snapshot)
                 }
@@ -84,9 +85,13 @@ class AppGraph private constructor(context: Context) {
                 mutable.value = previous.copy(error = "Δεν αποθηκεύτηκαν οι αλλαγές. Δοκίμασε ξανά.")
                 return@withLock
             }
-            publish(previous.copy(prefs = prefs), reschedule = prefs.reminderSettings() != previous.prefs.reminderSettings())
+            if (prefs.language != previous.prefs.language) reminders.createChannels(previous.events, prefs.language)
+            publish(previous.copy(prefs = prefs, error = null), reschedule = prefs.reminderSettings() != previous.prefs.reminderSettings())
         }
     }
+    fun clearError() { mutable.value = mutable.value.copy(error = null) }
+    /** Notification action: silence one broadcast without opening the app. */
+    suspend fun mute(eventId: String) = update { p -> p.copy(muted = p.muted + eventId, manual = p.manual - eventId) }
     suspend fun onResume() {
         // Android clears alarms on force-stop. Repair once per fresh foreground process,
         // while alarm/worker process starts and subsequent resumes keep unchanged registrations.
@@ -104,7 +109,7 @@ class AppGraph private constructor(context: Context) {
             publish(mutable.value)
         }
     }
-    fun testNotification(): Boolean = reminders.testNotification()
+    fun testNotification(): Boolean = reminders.testNotification(mutable.value.prefs.language)
 
     private suspend fun configureSync(snapshot: AppSnapshot) {
         val active = snapshot.notificationsAllowed && backgroundSyncNeeded(snapshot.prefs, snapshot.events, Instant.now())

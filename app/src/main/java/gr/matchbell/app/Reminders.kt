@@ -6,6 +6,7 @@ import android.content.*
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import androidx.compose.ui.graphics.toArgb
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -19,12 +20,16 @@ class ReminderEngine(private val context: Context, private val store: Store) {
     fun exactAllowed(): Boolean = Build.VERSION.SDK_INT < 31 || alarm.canScheduleExactAlarms()
     fun notificationsAllowed(): Boolean = NotificationManagerCompat.from(context).areNotificationsEnabled() &&
         (Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED)
-    fun createChannels(events: List<Broadcast> = emptyList()) {
-        (SportLabels + events.associate { it.sport to it.sportLabel } + mapOf("f1" to "Formula 1", "motogp" to "MotoGP", "test" to "Δοκιμαστική ειδοποίηση"))
+    fun createChannels(events: List<Broadcast> = emptyList(), language: String = "el") {
+        val t = txtFor(language)
+        val keys = SportLabels.keys + events.map { it.sport } + listOf("f1", "motogp")
+        (keys.associateWith { key -> t.sport(key, events.firstOrNull { it.sport == key }?.sportLabel) } +
+            mapOf("test" to t("Δοκιμαστική ειδοποίηση", "Test notification")))
             .forEach { (key, name) ->
                 if (createdChannels[key] == name) return@forEach
+                // Re-creating an existing channel only updates its name/description (user settings are kept).
                 manager.createNotificationChannel(NotificationChannel("sport-$key", name, NotificationManager.IMPORTANCE_HIGH).apply {
-                    description = "Υπενθυμίσεις μεταδόσεων: $name"
+                    description = t("Υπενθυμίσεις μεταδόσεων: $name", "Broadcast reminders: $name")
                     enableVibration(true)
                 })
                 createdChannels[key] = name
@@ -42,7 +47,7 @@ class ReminderEngine(private val context: Context, private val store: Store) {
         pending(key)?.let { alarm.cancel(it); it.cancel() }
     }
     fun reconcile(events: List<Broadcast>, prefs: Preferences, now: Instant, force: Boolean = false): Int {
-        createChannels(events)
+        createChannels(events, prefs.language)
         val delivered = store.delivered()
         val planned = if (notificationsAllowed()) planReminders(events, prefs, now)
             .filter { it.deliveryKey !in delivered } else emptyList()
@@ -74,7 +79,7 @@ class ReminderEngine(private val context: Context, private val store: Store) {
         return batches.filter { it.key in scheduled }.sumOf { it.tokens.size }
     }
     fun deliverBatch(events: List<Broadcast>, prefs: Preferences, tokens: List<ReminderToken>) {
-        createChannels(events)
+        createChannels(events, prefs.language)
         val now = Instant.now()
         val delivered = store.delivered().keys.toMutableSet()
         val newKeys = tokens.distinct().mapNotNull { token ->
@@ -89,8 +94,11 @@ class ReminderEngine(private val context: Context, private val store: Store) {
         val reminder = Reminder(event, minutes, event.startsAt.minusSeconds(minutes * 60L))
         if (reminder.deliveryKey in delivered || inQuietHours(now, prefs) || !notificationsAllowed()) return null
         if (now < reminder.at || now > event.startsAt.plusSeconds(120)) return null
-        val remaining = ((event.startsAt.toEpochMilli() - now.toEpochMilli()) / 60000).coerceAtLeast(0)
-        val whenText = if (remaining == 0L) "Η μετάδοση ξεκινά τώρα" else "Η μετάδοση ξεκινά σε $remaining λεπτά"
+        val t = txtFor(prefs.language)
+        // Round up so a 30-minute reminder fired a few seconds late still says "30", not "29".
+        val remaining = ((event.startsAt.toEpochMilli() - now.toEpochMilli() + 59_999) / 60000).coerceAtLeast(0)
+        val whenText = if (remaining == 0L) t("Η μετάδοση ξεκινά τώρα", "Starting now")
+            else t("Η μετάδοση ξεκινά σε $remaining λεπτά", "Starts in $remaining minutes")
         val text = "${event.local.format(TimeFormat)} · ${event.channel}\n$whenText"
         val channelId = "sport-${event.series ?: event.sport}"
         if (manager.getNotificationChannel(channelId)?.importance == NotificationManager.IMPORTANCE_NONE) return null
@@ -98,12 +106,17 @@ class ReminderEngine(private val context: Context, private val store: Store) {
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             .setData(Uri.Builder().scheme("matchbell").authority("event").appendPath(event.id).build())
         val content = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val mute = PendingIntent.getBroadcast(context, 0, Intent(context, ReminderReceiver::class.java)
+            .setAction(ReminderReceiver.ACTION_MUTE).putExtra("eventId", event.id)
+            .setData(Uri.Builder().scheme("matchbell").authority("mute").appendPath(event.id).build()),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.ic_notification).setContentTitle(event.title).setContentText(text.replace('\n', ' '))
             .setStyle(NotificationCompat.BigTextStyle().bigText(text)).setContentIntent(content)
             .setAutoCancel(true).setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .setPriority(NotificationCompat.PRIORITY_HIGH).setColor(0xff4de0c4.toInt())
-            .setGroup("matchbell-events").setWhen(event.startsAt.toEpochMilli())
+            .setPriority(NotificationCompat.PRIORITY_HIGH).setColor(paletteOf(prefs.palette).darkPrimary.toArgb())
+            .setGroup("matchbell-events").setWhen(event.startsAt.toEpochMilli()).setShowWhen(true)
+            .addAction(R.drawable.ic_notification, t("Σίγαση αγώνα", "Mute this match"), mute)
             .build()
         try {
             // The string tag prevents hash collisions between source IDs.
@@ -111,16 +124,17 @@ class ReminderEngine(private val context: Context, private val store: Store) {
             return reminder.deliveryKey
         } catch (_: SecurityException) { return null }
     }
-    fun testNotification(): Boolean {
-        createChannels()
+    fun testNotification(language: String = "el"): Boolean {
+        val t = txtFor(language)
+        createChannels(language = language)
         if (!notificationsAllowed()) return false
         val channel = manager.getNotificationChannel("sport-test")
         if (channel?.importance == NotificationManager.IMPORTANCE_NONE) return false
         val content = PendingIntent.getActivity(context, 991, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return try {
             manager.notify("test", 1, NotificationCompat.Builder(context, "sport-test")
-                .setSmallIcon(R.drawable.ic_notification).setContentTitle("Το MatchMate είναι έτοιμο 🔔")
-                .setContentText("Εδώ θα βλέπεις ώρα, αγώνα και κανάλι μετάδοσης.")
+                .setSmallIcon(R.drawable.ic_notification).setContentTitle(t("Το MatchMate είναι έτοιμο 🔔", "MatchMate is ready 🔔"))
+                .setContentText(t("Εδώ θα βλέπεις ώρα, αγώνα και κανάλι μετάδοσης.", "Here you'll see time, match and TV channel."))
                 .setContentIntent(content).setAutoCancel(true).setPriority(NotificationCompat.PRIORITY_HIGH).build())
             true
         } catch (_: SecurityException) { false }
@@ -128,7 +142,17 @@ class ReminderEngine(private val context: Context, private val store: Store) {
 }
 
 class ReminderReceiver : BroadcastReceiver() {
+    companion object { const val ACTION_MUTE = "gr.matchbell.app.action.MUTE" }
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ACTION_MUTE) {
+            val id = intent.getStringExtra("eventId") ?: return
+            context.getSystemService(NotificationManager::class.java).cancel(id, 1)
+            val pending = goAsync()
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                try { AppGraph.get(context).mute(id) } finally { pending.finish() }
+            }
+            return
+        }
         // The old single-event payload remains readable during an in-place upgrade.
         val tokens = intent.getStringExtra("batch")?.let(AlarmPayload::decode) ?: intent.getStringExtra("eventId")?.let {
             listOf(ReminderToken(it, intent.getIntExtra("minutes", -1), intent.getLongExtra("start", 0)))

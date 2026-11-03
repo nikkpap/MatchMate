@@ -122,14 +122,45 @@ data class Preferences(
     val quietEnd: Int = 8 * 60,
     val includeShows: Boolean = false,
     val refreshHours: Long = 6,
-    val theme: String = "dark"
+    /** dark · light · system · amoled */
+    val theme: String = "dark",
+    /** Colour palette id, see [Palettes]; "dynamic" = Material You on Android 12+. */
+    val palette: String = "mint",
+    /** el · en */
+    val language: String = "el",
+    /** TV channels the user cannot watch. Hidden from the schedule and automatic reminders. */
+    val hiddenChannels: Set<String> = emptySet()
 ) {
+    fun channelVisible(e: Broadcast): Boolean = e.channel !in hiddenChannels
     fun interested(e: Broadcast): Boolean = e.id in manual ||
-        ((!e.isShow || includeShows) && (teams.any { teamMatches(it, e, includeShows) } || e.sport in sports ||
+        (channelVisible(e) && (!e.isShow || includeShows) && (teams.any { teamMatches(it, e, includeShows) } || e.sport in sports ||
             e.series?.let { it in sports } == true || e.competitions.any { it.key in competitions }))
     fun wantsReminder(e: Broadcast): Boolean = enabled && interested(e) && e.id !in muted &&
         (!e.isShow || includeShows || e.id in manual)
+    /** What the bell icon shows: same rule as [wantsReminder] without the global pause. */
+    fun bellOn(e: Broadcast): Boolean = interested(e) && e.id !in muted
+    val hasSelections: Boolean get() = teams.isNotEmpty() || sports.isNotEmpty() || competitions.isNotEmpty() || manual.isNotEmpty()
+
+    /**
+     * Per-broadcast IDs (manual / muted / favourites) used to grow forever.
+     * After a successful download, keep only IDs still present in the programme.
+     */
+    fun pruned(events: List<Broadcast>): Preferences {
+        if (events.isEmpty()) return this
+        val ids = events.mapTo(HashSet()) { it.id }
+        val next = copy(manual = manual.filterTo(HashSet()) { it in ids },
+            muted = muted.filterTo(HashSet()) { it in ids },
+            favorites = favorites.filterTo(HashSet()) { it in ids })
+        return if (next.manual == manual && next.muted == muted && next.favorites == favorites) this else next
+    }
 }
+/** Bell icon: mute an automatic match, or add / remove a manual one. */
+fun toggleReminder(event: Broadcast, prefs: Preferences): Preferences =
+    if (prefs.bellOn(event)) prefs.copy(muted = prefs.muted + event.id, manual = prefs.manual - event.id)
+    else prefs.copy(manual = prefs.manual + event.id, muted = prefs.muted - event.id)
+fun toggleFavorite(event: Broadcast, prefs: Preferences): Preferences = prefs.copy(
+    favorites = if (event.id in prefs.favorites) prefs.favorites - event.id else prefs.favorites + event.id)
+
 fun inQuietHours(time: Instant, prefs: Preferences): Boolean {
     if (!prefs.quietEnabled) return false
     val local = time.atZone(Athens).toLocalTime()
