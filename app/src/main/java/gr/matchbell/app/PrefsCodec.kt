@@ -16,7 +16,7 @@ object PrefsCodec {
     }
 
     fun encode(p: Preferences): JSONObject = JSONObject().put("teams", JSONArray(p.teams.map {
-            JSONObject().put("name", it.name).put("sport", it.sport)
+            JSONObject().put("name", it.name).put("sport", it.sport).put("gender", it.gender)
         })).put("sports", strings(p.sports)).put("competitions", strings(p.competitions))
         .put("manual", strings(p.manual)).put("muted", strings(p.muted))
         .put("favorites", strings(p.favorites)).put("enabled", p.enabled)
@@ -32,7 +32,8 @@ object PrefsCodec {
             teams = (0 until teams.length()).mapNotNull { i ->
                 val t = teams.optJSONObject(i) ?: return@mapNotNull null
                 val name = t.optString("name").trim()
-                if (normalized(name).isBlank()) null else TeamRule(name, t.optString("sport", "all").ifBlank { "all" })
+                if (normalized(name).isBlank()) null else TeamRule(name, t.optString("sport", "all").ifBlank { "all" },
+                    t.optString("gender", "all").takeIf { it in Genders } ?: "all")
             }.distinctBy { it.key },
             sports = stringSet(p, "sports"), competitions = stringSet(p, "competitions"),
             manual = stringSet(p, "manual"), muted = stringSet(p, "muted"), favorites = stringSet(p, "favorites"),

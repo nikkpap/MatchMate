@@ -22,12 +22,17 @@ import androidx.compose.ui.unit.dp
     val t = LocalTxt.current
     var section by rememberSaveable { mutableIntStateOf(0) }
     var teamSport by rememberSaveable { mutableStateOf("all") }
+    var teamGender by rememberSaveable { mutableStateOf("all") }
+    var compGender by rememberSaveable { mutableStateOf("all") }
     var customName by rememberSaveable { mutableStateOf("") }
     var query by rememberSaveable { mutableStateOf("") }
     val prefs = state.prefs
     val availableSports = remember(state.events) { LinkedHashMap(SelectableSports).apply {
         state.events.filterNot { it.isShow }.forEach { put(it.sport, it.sportLabel) }
     } }
+    val womenCompetitions = remember(state.events) {
+        state.events.filter { it.isWomen }.flatMapTo(HashSet()) { e -> e.competitions.map { it.key } }
+    }
     val competitions = remember(state.events, prefs.includeShows) {
         state.events.filter { !it.isShow || prefs.includeShows }.flatMap { it.competitions }
             .distinctBy { it.key }.sortedBy { normalized(it.label) }
@@ -68,8 +73,8 @@ import androidx.compose.ui.unit.dp
             0 -> {
                 item {
                     SectionTitle(t("Οι ομάδες μου", "My teams"),
-                        t("Διάλεξε πρώτα άθλημα και μετά ομάδα. Η επιλογή «Όλα» καλύπτει όλα τα τμήματα που αναγνωρίζονται στον τίτλο.",
-                            "Pick a sport first, then a team. “All” covers every section recognised in the title."))
+                        t("Διάλεξε άθλημα, ανδρικό ή γυναικείο τμήμα και μετά ομάδα. Π.χ. ΠΑΟΚ · Ανδρικά για να μη σε ειδοποιεί για το γυναικείο χάντμπολ.",
+                            "Pick a sport, the men's or women's side, then a team. E.g. ΠΑΟΚ · Men to skip their women's handball."))
                     Spacer(Modifier.height(12.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         items(listOf("all", "podosfairo", "basket", "volley", "handball", "polo")) { key ->
@@ -77,12 +82,14 @@ import androidx.compose.ui.unit.dp
                                 leadingIcon = if (key == "all") null else ({ Icon(sportIcon(key), null, Modifier.size(16.dp)) }))
                         }
                     }
+                    Spacer(Modifier.height(8.dp))
+                    GenderChips(teamGender) { teamGender = it }
                 }
                 item {
                     Panel(Modifier.fillMaxWidth()) {
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             CommonTeams.forEach { name ->
-                                val rule = remember(name, teamSport) { TeamRule(name, teamSport) }
+                                val rule = remember(name, teamSport, teamGender) { TeamRule(name, teamSport, teamGender) }
                                 val selected = prefs.teams.any { it.key == rule.key }
                                 FilterChip(selected, {
                                     update { p -> p.copy(teams = if (p.teams.any { it.key == rule.key }) p.teams.filterNot { it.key == rule.key } else p.teams + rule) }
@@ -97,7 +104,7 @@ import androidx.compose.ui.unit.dp
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(10.dp))
                         val addCustom = {
-                            val rule = TeamRule(customName.trim(), teamSport)
+                            val rule = TeamRule(customName.trim(), teamSport, teamGender)
                             update { p -> p.copy(teams = (p.teams + rule).distinctBy { it.key }) }
                             customName = ""
                         }
@@ -107,8 +114,8 @@ import androidx.compose.ui.unit.dp
                                 Icon(Icons.Rounded.AddCircle, t("Προσθήκη ομάδας", "Add team"), tint = MaterialTheme.colorScheme.primary) } })
                         // Live preview: how many broadcasts this name would match right now.
                         if (normalized(customName).isNotBlank()) {
-                            val preview = remember(customName, teamSport, state.events) {
-                                val rule = TeamRule(customName.trim(), teamSport); state.events.count { teamMatches(rule, it) }
+                            val preview = remember(customName, teamSport, teamGender, state.events) {
+                                val rule = TeamRule(customName.trim(), teamSport, teamGender); state.events.count { teamMatches(rule, it) }
                             }
                             Spacer(Modifier.height(6.dp))
                             Text(t("Ταιριάζει με $preview μεταδόσεις αυτής της εβδομάδας.", "Matches $preview broadcasts this week."),
@@ -136,6 +143,8 @@ import androidx.compose.ui.unit.dp
                             "Options come from the current schedule. A competition covers all of its teams."))
                     Spacer(Modifier.height(12.dp))
                     SearchField(query, { query = it }, t("Αναζήτηση διοργάνωσης", "Search competitions"))
+                    Spacer(Modifier.height(8.dp))
+                    GenderChips(compGender) { compGender = it }
                 }
                 if (prefs.competitions.isNotEmpty()) item {
                     Panel(Modifier.fillMaxWidth()) {
@@ -153,9 +162,11 @@ import androidx.compose.ui.unit.dp
                     EmptyState(Icons.Rounded.EmojiEvents, t("Περιμένουμε το πρόγραμμα", "Waiting for the schedule"),
                         t("Ανανέωσε τις μεταδόσεις στην αρχική οθόνη για να εμφανιστούν οι διοργανώσεις.", "Refresh the schedule on the home screen to see competitions."))
                 }
-                items(competitions.filter { normalized(it.label).contains(normalized(query)) }, key = { it.key }) { tag ->
+                items(competitions.filter { normalized(it.label).contains(normalized(query)) &&
+                    (compGender == "all" || (compGender == "women") == (it.key in womenCompetitions)) }, key = { it.key }) { tag ->
                     val checked = tag.key in prefs.competitions
-                    SelectRow(Icons.Rounded.EmojiEvents, tag.label, null, checked) {
+                    val women = tag.key in womenCompetitions
+                    SelectRow(Icons.Rounded.EmojiEvents, tag.label, if (women) "♀ " + t("Γυναικών", "Women") else null, checked) {
                         update { it.copy(competitions = if (tag.key in it.competitions) it.competitions - tag.key else it.competitions + tag.key) }
                     }
                 }
@@ -167,16 +178,31 @@ import androidx.compose.ui.unit.dp
                             "A sport covers all of its broadcasts. Formula 1 and MotoGP can be picked separately."))
                 }
                 items(availableSports.entries.toList(), key = { it.key }) { (key, label) ->
+                    val chosen = prefs.sportGender(key)
                     Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
-                        Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(sportIcon(key), null, Modifier.size(25.dp), tint = sportAccent(key))
-                            Spacer(Modifier.width(13.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(t.sport(key, label), style = MaterialTheme.typography.titleMedium)
-                                if (key == "mixanokinitos-athlitismos") Text(t("Περιλαμβάνει F1, MotoGP και άλλες σειρές", "Includes F1, MotoGP and other series"),
-                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(sportIcon(key), null, Modifier.size(25.dp), tint = sportAccent(key))
+                                Spacer(Modifier.width(13.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(t.sport(key, label), style = MaterialTheme.typography.titleMedium)
+                                    if (key == "mixanokinitos-athlitismos") Text(t("Περιλαμβάνει F1, MotoGP και άλλες σειρές", "Includes F1, MotoGP and other series"),
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Switch(chosen != null, { checked -> update {
+                                    val others = it.sports.filterNot { e -> selectionSport(e) == key }.toSet()
+                                    it.copy(sports = if (checked) others + key else others)
+                                } })
                             }
-                            Switch(key in prefs.sports, { checked -> update { it.copy(sports = if (checked) it.sports + key else it.sports - key) } })
+                            // Men / women for a sport that is switched on (not for the F1 / MotoGP series).
+                            if (chosen != null && key !in setOf("f1", "motogp")) {
+                                Spacer(Modifier.height(6.dp))
+                                Row(Modifier.padding(start = 38.dp)) {
+                                    GenderChips(chosen) { g -> update {
+                                        it.copy(sports = it.sports.filterNot { e -> selectionSport(e) == key }.toSet() + sportSelection(key, g))
+                                    } }
+                                }
+                            }
                         }
                     }
                 }
@@ -232,6 +258,18 @@ import androidx.compose.ui.unit.dp
                 if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Checkbox(checked, { onToggle() })
+        }
+    }
+}
+
+/** Όλα / Ανδρικά / Γυναικεία chips. */
+@Composable fun GenderChips(selected: String, onSelect: (String) -> Unit) {
+    val t = LocalTxt.current
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+        Genders.forEach { g ->
+            FilterChip(selected == g, { onSelect(g) }, label = {
+                Text(when (g) { "men" -> "♂ " + t.gender(g); "women" -> "♀ " + t.gender(g); else -> t("Όλα", "All") })
+            })
         }
     }
 }

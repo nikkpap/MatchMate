@@ -99,7 +99,8 @@ class ReminderEngine(private val context: Context, private val store: Store) {
         val remaining = ((event.startsAt.toEpochMilli() - now.toEpochMilli() + 59_999) / 60000).coerceAtLeast(0)
         val whenText = if (remaining == 0L) t("Η μετάδοση ξεκινά τώρα", "Starting now")
             else t("Η μετάδοση ξεκινά σε $remaining λεπτά", "Starts in $remaining minutes")
-        val text = "${event.local.format(TimeFormat)} · ${event.channel}\n$whenText"
+        val text = "${event.local.format(TimeFormat)} · ${event.channel}" +
+            (if (event.isWomen) " · ♀ " + t("Γυναικών", "Women") else "") + "\n$whenText"
         val channelId = "sport-${event.series ?: event.sport}"
         if (manager.getNotificationChannel(channelId)?.importance == NotificationManager.IMPORTANCE_NONE) return null
         val intent = Intent(context, MainActivity::class.java).putExtra("eventId", event.id)

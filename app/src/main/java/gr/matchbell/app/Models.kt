@@ -15,8 +15,19 @@ private val NonLetters = Regex("[^\\p{L}\\p{N}]+")
 private val Season = Regex("\\b20\\d{2}\\s*[-/]\\s*(?:20)?\\d{2}\\b")
 private val Whitespace = Regex("\\s+")
 private val Sides = Regex("\\s+[-–—]\\s+|\\s+[vV][sS]\\.?\\s+")
-private val FormulaOne = Regex("\\b(formula 1|formula one|f1|φορμουλα 1)\\b")
+private val FormulaOne = Regex("(?<![\\p{L}\\p{N}])(formula 1|formula one|f1|φορμουλα 1)(?![\\p{L}\\p{N}])")
 private val MotoGP = Regex("\\b(motogp|moto gp)\\b")
+/**
+ * Women's sport markers, checked on the normalised title + tag labels (not the description,
+ * which can mention other teams). Confirmed on the real SPORT24 feed (Nov 2026):
+ * "Ευρωλίγκα Γυναικών", "Α1 Γυναικών Volley League", "UEFA Champions League Γυναικών",
+ * "Πρωτάθλημα Α1 Γυναικών", titles "WTA 250 2026" / "WTA Finals". Men's events carry no marker
+ * or "Ανδρών" / "ATP", so anything without a women's marker counts as men's.
+ */
+private const val NotLetterBefore = "(?<![\\p{L}\\p{N}])"
+private const val NotLetterAfter = "(?![\\p{L}\\p{N}])"
+private val WomenMarker = Regex(NotLetterBefore + "(γυναικ\\p{L}*|κορασιδ\\p{L}*|νεανιδ\\p{L}*|wta|wnba|nwsl|wsl|women\\p{L}*|ladies|liga f|feminin\\p{L}*|femenin\\p{L}*|femminile|frauen\\p{L}*)" + NotLetterAfter)
+private val WomenInLabel = Regex(NotLetterBefore + "(γυναικ\\p{L}*|women\\p{L}*|wta|wnba)" + NotLetterAfter)
 
 fun normalized(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFD)
     .replace(CombiningMarks, "").lowercase(Locale.ROOT)
@@ -35,9 +46,17 @@ data class Broadcast(
     val sport: String = tags.firstOrNull()?.key ?: "other"
     val sportLabel: String = SportLabels[sport] ?: tags.firstOrNull()?.label ?: "Άλλα αθλήματα"
     val isShow: Boolean = sport == "show"
+    /** True for women's competitions; see [WomenMarker]. */
+    val isWomen: Boolean = !isShow && WomenMarker.containsMatchIn(normalized(title + " " + tags.joinToString(" ") { it.label }))
+    /** "women" or "men"; shows have no gender. */
+    val gender: String = if (isWomen) "women" else "men"
     val competitions: List<Tag> = tags.drop(1).filter {
         it.key !in SportLabels && normalized(it.key) !in setOf("live", "agonas", "αγωνασ")
-    }.map { Tag(competitionKey(it.label), competitionLabel(it.label)) }.distinctBy { it.key }
+    }.map {
+        // Keep a women's competition apart from the men's one even if the tag forgot to say so.
+        val label = competitionLabel(it.label).let { l -> if (isWomen && !WomenInLabel.containsMatchIn(normalized(l))) "$l (Γυναικών)" else l }
+        Tag(competitionKey(label), label)
+    }.distinctBy { it.key }
     val series: String? = run {
         val text = normalized(title + " " + tags.joinToString { it.label })
         when {
@@ -49,7 +68,8 @@ data class Broadcast(
     val localDay: String = local.toLocalDate().toString()
     val teamSides: Set<String> = title.split(Sides).map(::normalized).toSet()
     val showTeamSides: Set<String> = if (isShow) teamSides + tags.flatMap { it.label.split(Sides) }.map(::normalized) else teamSides
-    val searchText: String = normalized(title + " " + channel + " " + competitions.joinToString { it.label })
+    val searchText: String = normalized(title + " " + channel + " " + competitions.joinToString { it.label } +
+        if (isWomen) " γυναικων γυναικεια women" else "")
     // Distinct broadcasts stay distinct: the feed has no reliable match ID.
     val identity: String get() = id
 }
@@ -84,11 +104,25 @@ fun competitionLabel(value: String): String = value
     .replace(Whitespace, " ").trim().trim('-', '/', ' ')
 fun competitionKey(value: String): String = normalized(competitionLabel(value))
 
-data class TeamRule(val name: String, val sport: String = "all") {
+/** [gender]: "all", "men" or "women" — e.g. follow only ΠΑΟΚ's men's or women's teams. */
+data class TeamRule(val name: String, val sport: String = "all", val gender: String = "all") {
     internal val aliases: Set<String> = (TeamAliases[normalized(name)] ?: listOf(name)).map(::normalized).toSet()
-    val key: String = "${normalized(name)}|$sport"
-    val label: String = name + if (sport == "all") " · Όλα" else " · ${SportLabels[sport] ?: sport}"
+    // "all" keeps the 0.3.0 key, so older saved selections stay identical.
+    val key: String = "${normalized(name)}|$sport" + if (gender == "all") "" else "|$gender"
+    val label: String = name + (if (sport == "all") " · Όλα" else " · ${SportLabels[sport] ?: sport}") +
+        when (gender) { "men" -> " · Ανδρών"; "women" -> " · Γυναικών"; else -> "" }
 }
+val Genders = listOf("all", "men", "women")
+fun genderMatches(filter: String, e: Broadcast): Boolean = when (filter) {
+    "women" -> e.isWomen
+    "men" -> !e.isWomen
+    else -> true
+}
+
+/** Sport selections are stored as "basket" (all) or "basket@women" / "basket@men". */
+fun sportSelection(key: String, gender: String) = if (gender == "all") key else "$key@$gender"
+fun selectionSport(entry: String) = entry.substringBefore('@')
+fun selectionGender(entry: String) = entry.substringAfter('@', "all")
 val CommonTeams = listOf("ΠΑΟΚ", "Ολυμπιακός", "Παναθηναϊκός", "ΑΕΚ", "Άρης", "ΟΦΗ",
     "Ατρόμητος", "Αστέρας Τρίπολης", "Λίβερπουλ", "Μάντσεστερ Σίτι", "Ρεάλ Μαδρίτης",
     "Μπαρτσελόνα", "Μπάγερν Μονάχου", "Γιουβέντους", "Μιλγουόκι Μπακς", "Λος Άντζελες Λέικερς")
@@ -104,6 +138,7 @@ private val TeamAliases = mapOf(
 fun teamMatches(rule: TeamRule, event: Broadcast, allowShows: Boolean = false): Boolean {
     if (rule.sport != "all" && event.sport != rule.sport) return false
     if (event.isShow && !allowShows) return false
+    if (!event.isShow && !genderMatches(rule.gender, event)) return false
     val sides = if (event.isShow && allowShows) event.showTeamSides else event.teamSides
     return sides.any { it in rule.aliases }
 }
@@ -133,8 +168,12 @@ data class Preferences(
 ) {
     fun channelVisible(e: Broadcast): Boolean = e.channel !in hiddenChannels
     fun interested(e: Broadcast): Boolean = e.id in manual ||
-        (channelVisible(e) && (!e.isShow || includeShows) && (teams.any { teamMatches(it, e, includeShows) } || e.sport in sports ||
-            e.series?.let { it in sports } == true || e.competitions.any { it.key in competitions }))
+        (channelVisible(e) && (!e.isShow || includeShows) && (teams.any { teamMatches(it, e, includeShows) } || sportSelected(e.sport, e) ||
+            e.series?.let { sportSelected(it, e) } == true || e.competitions.any { it.key in competitions }))
+    private fun sportSelected(key: String, e: Broadcast): Boolean =
+        key in sports || (!e.isShow && "$key@${e.gender}" in sports)
+    /** The gender chosen for a sport: "all" / "men" / "women", or null when the sport is off. */
+    fun sportGender(key: String): String? = sports.firstOrNull { selectionSport(it) == key }?.let(::selectionGender)
     fun wantsReminder(e: Broadcast): Boolean = enabled && interested(e) && e.id !in muted &&
         (!e.isShow || includeShows || e.id in manual)
     /** What the bell icon shows: same rule as [wantsReminder] without the global pause. */

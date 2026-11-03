@@ -179,6 +179,7 @@ private const val LIVE_WINDOW_MIN = 150L
     var dateKey by rememberSaveable { mutableStateOf(today.toString()) }
     var view by rememberSaveable { mutableStateOf("all") }
     var sport by rememberSaveable { mutableStateOf("all") }
+    var gender by rememberSaveable { mutableStateOf("all") }
     var search by rememberSaveable { mutableStateOf("") }
     var showSearch by rememberSaveable { mutableStateOf(false) }
     var showPast by rememberSaveable { mutableStateOf(false) }
@@ -191,12 +192,13 @@ private const val LIVE_WINDOW_MIN = 150L
         state.events.filter { prefs.interested(it) }.map { it.id }.toSet()
     }
     val searchKey = remember(search) { normalized(search) }
-    val matching = remember(state.events, dateKey, view, sport, searchKey, interestedIds, prefs.favorites, prefs.hiddenChannels, prefs.manual) {
+    val matching = remember(state.events, dateKey, view, sport, gender, searchKey, interestedIds, prefs.favorites, prefs.hiddenChannels, prefs.manual) {
         state.events.filter { e ->
             (dateKey == "week" || e.localDay == dateKey) &&
                 (prefs.channelVisible(e) || e.id in prefs.manual || e.id in prefs.favorites) &&
                 (view == "all" || (view == "mine" && e.id in interestedIds) || (view == "stars" && e.id in prefs.favorites)) &&
                 (sport == "all" || e.sport == sport || e.series == sport) &&
+                (gender == "all" || (!e.isShow && genderMatches(gender, e))) &&
                 (searchKey.isBlank() || e.searchText.contains(searchKey))
         }.sortedBy { it.startsAt }
     }
@@ -309,6 +311,17 @@ private const val LIVE_WINDOW_MIN = 150L
                 leadingIcon = { Icon(Icons.Rounded.Search, null) },
                 trailingIcon = if (search.isNotEmpty()) ({ IconButton(onClick = { search = "" }) { Icon(Icons.Rounded.Clear, t("Καθαρισμός", "Clear")) } }) else null,
                 shape = RoundedCornerShape(16.dp))
+        }
+        item {
+            // Men / women filter: SPORT24 marks women's competitions ("Γυναικών", "WTA").
+            SingleChoiceSegmentedButtonRow(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
+                Genders.forEachIndexed { i, g ->
+                    SegmentedButton(selected = gender == g, onClick = { gender = g }, shape = SegmentedButtonDefaults.itemShape(i, Genders.size),
+                        icon = {}) {
+                        Text(when (g) { "men" -> "♂ " + t.gender(g); "women" -> "♀ " + t.gender(g); else -> "♂♀ " + t("Όλα", "All") }, maxLines = 1)
+                    }
+                }
+            }
         }
         item {
             LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -465,6 +478,7 @@ fun localError(error: String, t: Txt): String = if (!t.en) error else when {
                                 Spacer(Modifier.width(5.dp)); Text(event.channel, style = MaterialTheme.typography.labelSmall)
                             }
                         }
+                        if (event.isWomen) WomenBadge()
                         when {
                             live -> Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(8.dp)) {
                                 Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -549,6 +563,7 @@ fun shareText(event: Broadcast, t: Txt): String =
             }
             Text(event.title, style = MaterialTheme.typography.headlineSmall)
             Text(event.local.format(t.pattern("EEEE d MMMM · HH:mm")).replaceFirstChar { it.titlecase(t.locale) }, style = MaterialTheme.typography.titleMedium)
+            if (event.isWomen) WomenBadge()
             Text("📺 ${event.channel}", color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.titleMedium)
             if (event.description.isNotBlank()) Text(event.description, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(t("Ώρα μετάδοσης, σύμφωνα με την πηγή. Μπορεί να διαφέρει από την έναρξη του αγώνα.",
@@ -648,3 +663,13 @@ fun shareText(event: Broadcast, t: Txt): String =
         }
     }
 }
+
+/** Small pink "♀ Women" chip on cards and in the details sheet. */
+@Composable fun WomenBadge() {
+    val t = LocalTxt.current
+    Surface(color = WomenPink.copy(alpha = .18f), shape = RoundedCornerShape(8.dp)) {
+        Text("♀ " + t("Γυναικών", "Women"), Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            style = MaterialTheme.typography.labelSmall, color = WomenPink, fontWeight = FontWeight.Bold)
+    }
+}
+val WomenPink = androidx.compose.ui.graphics.Color(0xFFF06292)

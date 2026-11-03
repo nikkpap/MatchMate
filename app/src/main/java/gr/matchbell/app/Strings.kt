@@ -44,7 +44,14 @@ class Txt(val en: Boolean) {
     }
 
     fun teamLabel(rule: TeamRule): String =
-        rule.name + " · " + if (rule.sport == "all") this("Όλα", "All") else sport(rule.sport)
+        rule.name + " · " + (if (rule.sport == "all") this("Όλα", "All") else sport(rule.sport)) +
+            if (rule.gender == "all") "" else " · " + gender(rule.gender)
+
+    fun gender(g: String): String = when (g) {
+        "men" -> this("Ανδρικά", "Men")
+        "women" -> this("Γυναικεία", "Women")
+        else -> this("Όλα", "All")
+    }
 }
 
 val GreekTxt = Txt(false)
