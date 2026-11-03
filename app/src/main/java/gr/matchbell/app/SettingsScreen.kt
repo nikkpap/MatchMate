@@ -229,6 +229,8 @@ import java.time.LocalDate
                 SectionTitle(t("Σχετικά", "About"), t("MatchMate 0.3.0 · Ανεξάρτητη εφαρμογή", "MatchMate 0.3.0 · Independent app"))
                 Spacer(Modifier.height(12.dp))
                 LanguageSwitch(p, update)
+                HorizontalDivider(Modifier.padding(vertical = 14.dp))
+                UpdatePanel()
                 Spacer(Modifier.height(6.dp))
                 TextButton(onClick = openAbout) {
                     Icon(Icons.Rounded.Info, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(t("Περισσότερα για την εφαρμογή", "More about the app"))

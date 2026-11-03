@@ -1,0 +1,80 @@
+# Every push to main: run tests, build the signed APK and publish a GitHub Release.
+# The app checks https://api.github.com/repos/nikkpap/MatchMate/releases/latest and offers the update.
+#   - Add "[no release]" to a commit message to build/test without publishing.
+#   - Run manually any time from the Actions tab ("Run workflow").
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Version
+        id: version
+        run: |
+          BASE=$(grep '^appVersionBase=' gradle.properties | cut -d= -f2 | tr -d '[:space:]')
+          NAME="${BASE}.${{ github.run_number }}"
+          CODE=$((100 + ${{ github.run_number }}))
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "MatchMate $NAME (versionCode $CODE)"
+
+      - name: Test & build
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :app:testDebugUnitTest :app:assemblePreview \
+            -PappVersionCode=${{ steps.version.outputs.code }} \
+            -PappVersionName=${{ steps.version.outputs.name }}
+
+      - name: Collect APK
+        id: apk
+        run: |
+          mkdir -p dist
+          APK="dist/MatchMate-${{ steps.version.outputs.name }}.apk"
+          cp app/build/outputs/apk/preview/app-preview.apk "$APK"
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          echo "path=$APK" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MatchMate-${{ steps.version.outputs.name }}
+          path: dist/*.apk
+
+      - name: Publish release
+        if: github.event_name != 'pull_request' && !contains(github.event.head_commit.message, '[no release]')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "$(git log -1 --pretty=%B | grep -v '^Co-Authored-By' | grep -v '^Claude-Session' | sed '/^$/N;/^\n$/D')"
+            echo
+            echo "SHA-256: ${{ steps.apk.outputs.sha }}"
+          } > notes.md
+          gh release create "v${{ steps.version.outputs.name }}" "${{ steps.apk.outputs.path }}" \
+            --title "MatchMate ${{ steps.version.outputs.name }}" --notes-file notes.md --latest

@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private var openedEvent by mutableStateOf<String?>(null)
+    private var openUpdate by mutableStateOf(false)
     override fun onCreate(savedInstanceState: Bundle?) {
         val graph = AppGraph.get(this)
         // Avoid a dark flash before Compose draws when the user picked the light theme.
@@ -37,7 +38,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         // Fix: after rotation the launch intent is redelivered; do not reopen an already handled event.
-        if (savedInstanceState == null) openedEvent = intent.getStringExtra("eventId")
+        if (savedInstanceState == null) {
+            openedEvent = intent.getStringExtra("eventId")
+            openUpdate = intent.getBooleanExtra("openUpdate", false)
+        }
+        val updates = UpdateManager.get(this)
         setContent {
             val state by graph.state.collectAsStateWithLifecycle()
             val scope = rememberCoroutineScope()
@@ -47,7 +52,10 @@ class MainActivity : ComponentActivity() {
             }
             DisposableEffect(lifecycle) {
                 val observer = LifecycleEventObserver { _, event ->
-                    if (event == Lifecycle.Event.ON_RESUME) scope.launch { graph.onResume() }
+                    if (event == Lifecycle.Event.ON_RESUME) {
+                        scope.launch { graph.onResume() }
+                        scope.launch { updates.checkIfDue() }
+                    }
                 }
                 lifecycle.addObserver(observer)
                 onDispose { lifecycle.removeObserver(observer) }
@@ -62,7 +70,7 @@ class MainActivity : ComponentActivity() {
                         isAppearanceLightNavigationBars = lightBars
                     }
                 }
-                MatchMateApp(state, openedEvent, { openedEvent = null },
+                MatchMateApp(state, openedEvent, { openedEvent = null }, openUpdate, { openUpdate = false },
                     onUpdate = { transform -> scope.launch { graph.update(transform) } },
                     onRefresh = { scope.launch { graph.refresh() } },
                     onDismissError = { graph.clearError() },
@@ -84,6 +92,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         openedEvent = intent.getStringExtra("eventId")
+        if (intent.getBooleanExtra("openUpdate", false)) openUpdate = true
     }
     private fun safeStart(intent: Intent) {
         try { startActivity(intent) } catch (_: ActivityNotFoundException) {

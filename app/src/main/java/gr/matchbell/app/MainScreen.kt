@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
@@ -54,6 +55,7 @@ private const val LIVE_WINDOW_MIN = 150L
 
 @Composable fun MatchMateApp(
     state: AppSnapshot, openedEvent: String?, onOpenedConsumed: () -> Unit,
+    openUpdate: Boolean, onUpdateConsumed: () -> Unit,
     onUpdate: UpdatePrefs, onRefresh: () -> Unit, onDismissError: () -> Unit,
     onNotificationPermission: () -> Unit, onExactPermission: () -> Unit,
     onSystemSettings: () -> Unit, onTest: () -> Boolean
@@ -65,6 +67,7 @@ private const val LIVE_WINDOW_MIN = 150L
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val toast: (String) -> Unit = { text -> scope.launch { snackbar.showSnackbar(text) } }
+    LaunchedEffect(openUpdate) { if (openUpdate) { about = true; onUpdateConsumed() } }
     LaunchedEffect(openedEvent, state.events, state.loading) {
         if (openedEvent != null) {
             val found = state.events.firstOrNull { it.id == openedEvent }
@@ -102,7 +105,7 @@ private const val LIVE_WINDOW_MIN = 150L
                 IconButton(onClick = { about = true }) { Icon(Icons.Rounded.Info, t("Σχετικά", "About")) }
             }
             when (tab) {
-                0 -> ProgrammeScreen(state, onUpdate, onRefresh, onDismissError, { tab = it }, { detail = it })
+                0 -> ProgrammeScreen(state, onUpdate, onRefresh, onDismissError, { tab = it }, { detail = it }, { about = true })
                 1 -> FollowingScreen(state, onUpdate)
                 2 -> SettingsScreen(state, onUpdate, onNotificationPermission, onExactPermission, onSystemSettings,
                     { toast(if (onTest()) t("Στάλθηκε δοκιμαστική ειδοποίηση.", "Test notification sent.")
@@ -156,9 +159,11 @@ private const val LIVE_WINDOW_MIN = 150L
 
 @Composable private fun ProgrammeScreen(
     state: AppSnapshot, update: UpdatePrefs, refresh: () -> Unit, dismissError: () -> Unit,
-    goTab: (Int) -> Unit, open: (Broadcast) -> Unit
+    goTab: (Int) -> Unit, open: (Broadcast) -> Unit, openAbout: () -> Unit
 ) {
     val t = LocalTxt.current
+    val updateContext = LocalContext.current
+    val updateState by remember { UpdateManager.get(updateContext) }.state.collectAsStateWithLifecycle()
     var now by remember { mutableStateOf(Instant.now()) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) {
@@ -232,6 +237,8 @@ private const val LIVE_WINDOW_MIN = 150L
                 }
             }
         }
+        if (updateState is UpdateState.Available || updateState is UpdateState.Downloading || updateState is UpdateState.Ready)
+            item(key = "update-banner") { UpdateBanner(Modifier.padding(horizontal = 20.dp), openAbout) }
         if (!prefs.hasSelections) {
             item {
                 Panel(Modifier.padding(horizontal = 20.dp).fillMaxWidth().clip(RoundedCornerShape(24.dp)).clickable { goTab(1) }) {
@@ -606,6 +613,8 @@ fun shareText(event: Broadcast, t: Txt): String =
             Text(t("Έκδοση $version · Ανεξάρτητη εφαρμογή", "Version $version · Independent app"),
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LanguageSwitch(prefs, update)
+            HorizontalDivider()
+            UpdatePanel()
             HorizontalDivider()
             Text(t("Τι κάνει", "What it does"), style = MaterialTheme.typography.titleMedium)
             Text(t("Το εβδομαδιαίο πρόγραμμα αθλητικών μεταδόσεων στην ελληνική TV, με υπενθυμίσεις για τις ομάδες, τις διοργανώσεις και τα αθλήματα που ακολουθείς — ακόμη και με κλειστή εφαρμογή.",

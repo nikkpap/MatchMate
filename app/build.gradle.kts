@@ -10,8 +10,9 @@ android {
         applicationId = "gr.matchbell.app"
         minSdk = 28
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        // CI (GitHub Actions) passes -PappVersionCode / -PappVersionName for every release build.
+        versionCode = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 3
+        versionName = (project.findProperty("appVersionName") as String?) ?: "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {

@@ -17,7 +17,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 class MatchMateApplication : Application() {
-    override fun onCreate() { super.onCreate(); AppGraph.get(this) }
+    override fun onCreate() { super.onCreate(); AppGraph.get(this); UpdateManager.get(this).schedule() }
 }
 
 class AppGraph private constructor(context: Context) {
