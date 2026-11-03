@@ -285,8 +285,8 @@ import androidx.compose.ui.unit.dp
     FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
         Genders.forEach { g ->
             FilterChip(selected == g, { onSelect(g) }, label = {
-                Text(when (g) { "men" -> "♂ " + t.gender(g); "women" -> "♀ " + t.gender(g); else -> t("Όλα", "All") })
-            })
+                Text(when (g) { "men" -> "♂ " + t.gender(g); "women" -> "♀ " + t.gender(g); else -> "♂♀ " + t("Όλα", "All") }, softWrap = false)
+            }, leadingIcon = if (selected == g) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp)) }) else null)
         }
     }
 }

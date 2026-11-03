@@ -664,14 +664,9 @@ val WomenPink = androidx.compose.ui.graphics.Color(0xFFF06292)
                                events: List<Broadcast> = emptyList()) {
     val t = LocalTxt.current
     Column(modifier.fillMaxWidth()) {
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            Genders.forEachIndexed { i, g ->
-                SegmentedButton(selected = prefs.scopeGender == g, onClick = { update { it.copy(scopeGender = g) } },
-                    shape = SegmentedButtonDefaults.itemShape(i, Genders.size), icon = {}) {
-                    Text(when (g) { "men" -> "♂ " + t.gender(g); "women" -> "♀ " + t.gender(g); else -> "♂♀ " + t("Όλα", "All") }, maxLines = 1)
-                }
-            }
-        }
+        // Chips size to their text and wrap to a second line with large system fonts,
+        // so "♀ Γυναικεία" is never cut off (the old equal-width segmented buttons truncated it).
+        GenderChips(prefs.scopeGender) { g -> update { it.copy(scopeGender = g) } }
         Spacer(Modifier.height(8.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             item { FilterChip(prefs.scopeSports.isEmpty(), { update { it.copy(scopeSports = emptySet()) } }, label = { Text(t("Όλα τα σπορ", "All sports")) }) }
