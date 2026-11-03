@@ -13,7 +13,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import kotlinx.coroutines.launch
 import java.time.Instant
 
@@ -24,8 +30,12 @@ import java.time.Instant
     val manager = remember { UpdateManager.get(context) }
     val state by manager.state.collectAsStateWithLifecycle()
     val auto by manager.autoCheck.collectAsStateWithLifecycle()
+    val autoInstall by manager.autoInstall.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var needsPermission by remember { mutableStateOf(false) }
+    // Re-read the "install unknown apps" permission whenever the user comes back from Settings.
+    var installAllowed by remember { mutableStateOf(manager.installAllowed()) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { installAllowed = manager.installAllowed(); if (installAllowed) needsPermission = false }
     Column(modifier.fillMaxWidth().animateContentSize()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.SystemUpdate, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
@@ -72,13 +82,19 @@ import java.time.Instant
                     "Step 1: turn on “Allow from this source” for MatchMate. Step 2: come back and tap “Install” again."),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
             }
+            is UpdateState.Installing -> Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp))
+                Text(t("Εγκατάσταση ${s.info.version}… η εφαρμογή θα ξεκινήσει ξανά.", "Installing ${s.info.version}… the app will restart."),
+                    style = MaterialTheme.typography.bodyMedium)
+            }
             is UpdateState.Failed -> Text(when (s.reason) {
                 "checksum" -> t("Το αρχείο δεν πέρασε τον έλεγχο SHA-256 και διαγράφηκε.", "The file failed the SHA-256 check and was deleted.")
                 "download" -> t("Η λήψη απέτυχε. Δοκίμασε ξανά.", "Download failed. Try again.")
+                "install" -> t("Η εγκατάσταση δεν ολοκληρώθηκε. Δοκίμασε ξανά.", "Installation didn't finish. Try again.")
                 else -> t("Δεν ήταν δυνατός ο έλεγχος. Έλεγξε τη σύνδεση.", "Couldn't check. Check your connection.")
             }, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
         }
-        if (state !is UpdateState.Downloading && state !is UpdateState.Ready && state !is UpdateState.Available) {
+        if (state !is UpdateState.Downloading && state !is UpdateState.Ready && state !is UpdateState.Available && state !is UpdateState.Installing) {
             TextButton(onClick = { scope.launch { manager.check() } }, enabled = state != UpdateState.Checking) {
                 Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp))
                 Text(t("Έλεγχος για ενημέρωση", "Check for updates"))
@@ -87,6 +103,29 @@ import java.time.Instant
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(t("Αυτόματος έλεγχος (1 φορά τη μέρα)", "Check automatically (daily)"), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
             Switch(auto, { manager.setAutoCheck(it) })
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(t("Αυτόματη εγκατάσταση (OTA)", "Install automatically (OTA)"), style = MaterialTheme.typography.bodyMedium)
+                Text(if (manager.silentSupported) t("Κατεβαίνει μόνη της και εγκαθίσταται όταν βγεις από την εφαρμογή — χωρίς πάτημα.",
+                        "Downloads by itself and installs when you leave the app — no taps.")
+                    else t("Κατεβαίνει μόνη της· το Android σου ζητά ένα πάτημα για την εγκατάσταση.",
+                        "Downloads by itself; your Android asks for one tap to install."),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(autoInstall && auto, { manager.setAutoInstall(it) }, enabled = auto)
+        }
+        if (autoInstall && auto && !installAllowed) {
+            Spacer(Modifier.height(6.dp))
+            Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(12.dp)) {
+                Column(Modifier.padding(10.dp)) {
+                    Text(t("Μία φορά μόνο: επίτρεψε στο MatchMate να εγκαθιστά τις ενημερώσεις του.",
+                        "One time only: allow MatchMate to install its own updates."), style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { openUnknownSources(context) }) {
+                        Text(t("Άνοιγμα ρύθμισης", "Open setting"))
+                    }
+                }
+            }
         }
         Text(t("Πηγή: github.com/${UpdateSource.OWNER}/${UpdateSource.REPO} · Releases", "Source: github.com/${UpdateSource.OWNER}/${UpdateSource.REPO} · Releases"),
             style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -122,4 +161,11 @@ import java.time.Instant
                 Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
         }
     }
+}
+
+fun openUnknownSources(context: Context) {
+    try {
+        context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (_: Exception) { }
 }

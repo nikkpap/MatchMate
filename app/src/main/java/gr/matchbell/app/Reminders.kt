@@ -175,6 +175,7 @@ class RestoreReceiver : BroadcastReceiver() {
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
                 val graph = AppGraph.get(context)
+                if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) UpdateManager.get(context).onPackageReplaced()
                 graph.restore(force = true)
                 graph.enqueueRefresh()
             } finally { pending.finish() }

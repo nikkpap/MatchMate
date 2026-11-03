@@ -53,8 +53,14 @@ class MainActivity : ComponentActivity() {
             DisposableEffect(lifecycle) {
                 val observer = LifecycleEventObserver { _, event ->
                     if (event == Lifecycle.Event.ON_RESUME) {
+                        updates.foreground = true
                         scope.launch { graph.onResume() }
                         scope.launch { updates.checkIfDue() }
+                    }
+                    if (event == Lifecycle.Event.ON_STOP) {
+                        // Leaving the app: a downloaded update installs now, out of the user's way.
+                        updates.foreground = false
+                        updates.onAppBackground()
                     }
                 }
                 lifecycle.addObserver(observer)
