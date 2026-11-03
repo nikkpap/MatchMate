@@ -56,3 +56,32 @@ class Txt(val en: Boolean) {
 
 val GreekTxt = Txt(false)
 fun txtFor(language: String) = Txt(language == "en")
+
+/** Emoji shown in reminders for each sport (key from the feed, label as fallback). */
+fun sportEmoji(key: String, label: String = ""): String = when (key) {
+    "podosfairo", "podosfairo_salas" -> "⚽"
+    "basket" -> "🏀"
+    "tennis" -> "🎾"
+    "volley" -> "🏐"
+    "handball" -> "🤾"
+    "polo" -> "🤽"
+    "f1" -> "🏎️"
+    "motogp" -> "🏍️"
+    "mixanokinitos-athlitismos" -> "🏁"
+    "stivos" -> "🏃"
+    "polemikes-texnes" -> "🥊"
+    "show" -> "🎙️"
+    else -> when {
+        normalized(label).startsWith("γκολφ") || key.contains("golf") || key.contains("gkolf") -> "⛳"
+        normalized(label).contains("ποδηλασ") -> "🚴"
+        normalized(label).contains("κολυμβ") -> "🏊"
+        normalized(label).contains("σκι") -> "⛷️"
+        normalized(label).contains("μπεϊζμπολ") || normalized(label).contains("μπειζμπολ") -> "⚾"
+        normalized(label).contains("χοκει") -> "🏒"
+        normalized(label).contains("ραγκμπι") || normalized(label).contains("φουτμπολ") -> "🏈"
+        else -> "🏆"
+    }
+}
+
+/** "ΠΑΟΚ - Ρεάλ" → "ΠΑΟΚ – Ρεάλ" (en dash reads better in big bold text). */
+fun matchTitle(e: Broadcast): String = if (e.teamNames.size == 2) e.teamNames.joinToString("  –  ") else e.title

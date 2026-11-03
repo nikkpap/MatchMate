@@ -99,8 +99,6 @@ class ReminderEngine(private val context: Context, private val store: Store) {
         val remaining = ((event.startsAt.toEpochMilli() - now.toEpochMilli() + 59_999) / 60000).coerceAtLeast(0)
         val whenText = if (remaining == 0L) t("Η μετάδοση ξεκινά τώρα", "Starting now")
             else t("Η μετάδοση ξεκινά σε $remaining λεπτά", "Starts in $remaining minutes")
-        val text = "${event.local.format(TimeFormat)} · ${event.channel}" +
-            (if (event.isWomen) " · ♀ " + t("Γυναικών", "Women") else "") + "\n$whenText"
         val channelId = "sport-${event.series ?: event.sport}"
         if (manager.getNotificationChannel(channelId)?.importance == NotificationManager.IMPORTANCE_NONE) return null
         val intent = Intent(context, MainActivity::class.java).putExtra("eventId", event.id)
@@ -111,11 +109,14 @@ class ReminderEngine(private val context: Context, private val store: Store) {
             .setAction(ReminderReceiver.ACTION_MUTE).putExtra("eventId", event.id)
             .setData(Uri.Builder().scheme("matchbell").authority("mute").appendPath(event.id).build()),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val notification = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(R.drawable.ic_notification).setContentTitle(event.title).setContentText(text.replace('\n', ' '))
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text)).setContentIntent(content)
-            .setAutoCancel(true).setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .setPriority(NotificationCompat.PRIORITY_HIGH).setColor(paletteOf(prefs.palette).darkPrimary.toArgb())
+        val emoji = sportEmoji(event.series ?: event.sport, event.sportLabel)
+        val teams = matchTitle(event)
+        val details = "🕒 ${event.local.format(TimeFormat)} · 📺 ${event.channel}"
+        val competition = listOfNotNull(event.competitions.firstOrNull()?.label ?: t.sport(event.series ?: event.sport, event.sportLabel),
+            if (event.isWomen) "♀ " + t("Γυναικών", "Women") else null).joinToString(" · ")
+        val notification = matchNotification(channelId, emoji, teams, competition, details, "⏰ $whenText")
+            .setContentIntent(content)
+            .setColor(paletteOf(prefs.palette).darkPrimary.toArgb())
             .setGroup("matchbell-events").setWhen(event.startsAt.toEpochMilli()).setShowWhen(true)
             .addAction(R.drawable.ic_notification, t("Σίγαση αγώνα", "Mute this match"), mute)
             .build()
@@ -125,6 +126,29 @@ class ReminderEngine(private val context: Context, private val store: Store) {
             return reminder.deliveryKey
         } catch (_: SecurityException) { return null }
     }
+    /**
+     * Reminder look: sport emoji + teams in large bold text (custom layout), with a plain
+     * title/text fallback for the lock screen, watches and accessibility.
+     */
+    private fun matchNotification(channelId: String, emoji: String, teams: String, competition: String,
+                                  details: String, whenText: String): NotificationCompat.Builder {
+        val small = android.widget.RemoteViews(context.packageName, R.layout.notification_match_small).apply {
+            setTextViewText(R.id.teams, "$emoji  $teams"); setTextViewText(R.id.details, "$details · $whenText")
+        }
+        val big = android.widget.RemoteViews(context.packageName, R.layout.notification_match_big).apply {
+            setTextViewText(R.id.emoji, emoji); setTextViewText(R.id.teams, teams)
+            setTextViewText(R.id.competition, competition); setTextViewText(R.id.details, details)
+            setTextViewText(R.id.countdown, whenText)
+        }
+        return NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("$emoji $teams").setContentText("$details · $whenText")
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .setCustomContentView(small).setCustomBigContentView(big).setCustomHeadsUpContentView(small)
+            .setAutoCancel(true).setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+    }
+
     fun testNotification(language: String = "el"): Boolean {
         val t = txtFor(language)
         createChannels(language = language)
@@ -133,10 +157,11 @@ class ReminderEngine(private val context: Context, private val store: Store) {
         if (channel?.importance == NotificationManager.IMPORTANCE_NONE) return false
         val content = PendingIntent.getActivity(context, 991, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return try {
-            manager.notify("test", 1, NotificationCompat.Builder(context, "sport-test")
-                .setSmallIcon(R.drawable.ic_notification).setContentTitle(t("Το MatchMate είναι έτοιμο 🔔", "MatchMate is ready 🔔"))
-                .setContentText(t("Εδώ θα βλέπεις ώρα, αγώνα και κανάλι μετάδοσης.", "Here you'll see time, match and TV channel."))
-                .setContentIntent(content).setAutoCancel(true).setPriority(NotificationCompat.PRIORITY_HIGH).build())
+            // Preview of a real reminder, so the user sees the final look.
+            manager.notify("test", 1, matchNotification("sport-test", "⚽", "ΠΑΟΚ  –  ΑΕΚ",
+                t("Δοκιμαστική ειδοποίηση · Stoiximan Super League", "Test notification · Stoiximan Super League"),
+                "🕒 21:00 · 📺 Novasports Prime", "⏰ " + t("Η μετάδοση ξεκινά σε 30 λεπτά", "Starts in 30 minutes"))
+                .setContentIntent(content).build())
             true
         } catch (_: SecurityException) { false }
     }
