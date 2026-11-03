@@ -21,8 +21,12 @@ import androidx.compose.ui.unit.dp
 @Composable fun FollowingScreen(state: AppSnapshot, update: UpdatePrefs) {
     val t = LocalTxt.current
     var section by rememberSaveable { mutableIntStateOf(0) }
-    var teamSport by rememberSaveable { mutableStateOf("all") }
-    var teamGender by rememberSaveable { mutableStateOf("all") }
+    // The team picker starts from the saved profile (e.g. Ανδρικά + Ποδόσφαιρο).
+    val teamSports = listOf("all", "podosfairo", "basket", "volley", "handball", "polo")
+    var teamSport by rememberSaveable(state.prefs.scopeSports) {
+        mutableStateOf(state.prefs.scopeSports.singleOrNull()?.takeIf { it in teamSports } ?: "all")
+    }
+    var teamGender by rememberSaveable(state.prefs.scopeGender) { mutableStateOf(state.prefs.scopeGender) }
     var compGender by rememberSaveable { mutableStateOf("all") }
     var customName by rememberSaveable { mutableStateOf("") }
     var query by rememberSaveable { mutableStateOf("") }
@@ -48,6 +52,16 @@ import androidx.compose.ui.unit.dp
             Spacer(Modifier.height(7.dp))
             Text(t("Διάλεξε όσα σε ενδιαφέρουν. Θα ειδοποιείσαι για οποιαδήποτε από τις επιλογές σου.",
                 "Pick what you care about. You'll be reminded about any of your selections."), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        item {
+            Panel(Modifier.fillMaxWidth()) {
+                Text(t("Το προφίλ μου", "My profile"), style = MaterialTheme.typography.titleMedium)
+                Text(t("Τι βλέπεις στο Πρόγραμμα και για τι σε ειδοποιεί αυτόματα. Αποθηκεύεται.",
+                    "What the schedule shows and what you're reminded about. Saved."),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(10.dp))
+                ProfileFilters(prefs, update, availableSports.keys.filter { it != "other" }, events = state.events)
+            }
         }
         item {
             val counts = listOf(prefs.teams.size, prefs.competitions.size, prefs.sports.size, prefs.hiddenChannels.size)
@@ -77,7 +91,7 @@ import androidx.compose.ui.unit.dp
                             "Pick a sport, the men's or women's side, then a team. E.g. ΠΑΟΚ · Men to skip their women's handball."))
                     Spacer(Modifier.height(12.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        items(listOf("all", "podosfairo", "basket", "volley", "handball", "polo")) { key ->
+                        items(teamSports) { key ->
                             FilterChip(teamSport == key, { teamSport = key }, label = { Text(if (key == "all") t("Όλα", "All") else t.sport(key)) },
                                 leadingIcon = if (key == "all") null else ({ Icon(sportIcon(key), null, Modifier.size(16.dp)) }))
                         }
@@ -188,6 +202,9 @@ import androidx.compose.ui.unit.dp
                                     Text(t.sport(key, label), style = MaterialTheme.typography.titleMedium)
                                     if (key == "mixanokinitos-athlitismos") Text(t("Περιλαμβάνει F1, MotoGP και άλλες σειρές", "Includes F1, MotoGP and other series"),
                                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (chosen != null && prefs.scopeSports.isNotEmpty() && key !in prefs.scopeSports)
+                                        Text(t("Εκτός προφίλ — δεν εμφανίζεται ούτε ειδοποιεί", "Outside your profile — hidden and silent"),
+                                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                                 }
                                 Switch(chosen != null, { checked -> update {
                                     val others = it.sports.filterNot { e -> selectionSport(e) == key }.toSet()

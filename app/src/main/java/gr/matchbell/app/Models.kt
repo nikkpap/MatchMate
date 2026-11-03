@@ -164,11 +164,23 @@ data class Preferences(
     /** el · en */
     val language: String = "el",
     /** TV channels the user cannot watch. Hidden from the schedule and automatic reminders. */
-    val hiddenChannels: Set<String> = emptySet()
+    val hiddenChannels: Set<String> = emptySet(),
+    /**
+     * Saved profile "what I watch": applies to the schedule AND to automatic reminders.
+     * scopeGender: all / men / women. scopeSports: empty = every sport, else e.g. {"podosfairo"}.
+     */
+    val scopeGender: String = "all",
+    val scopeSports: Set<String> = emptySet(),
+    /** Last schedule view (all / mine / stars), remembered between launches. */
+    val programmeView: String = "all"
 ) {
+    fun inScope(e: Broadcast): Boolean =
+        (scopeSports.isEmpty() || e.isShow || e.sport in scopeSports || e.series in scopeSports) &&
+            (scopeGender == "all" || (!e.isShow && genderMatches(scopeGender, e)) || (e.isShow && scopeGender != "women"))
+    val hasScope: Boolean get() = scopeGender != "all" || scopeSports.isNotEmpty()
     fun channelVisible(e: Broadcast): Boolean = e.channel !in hiddenChannels
     fun interested(e: Broadcast): Boolean = e.id in manual ||
-        (channelVisible(e) && (!e.isShow || includeShows) && (teams.any { teamMatches(it, e, includeShows) } || sportSelected(e.sport, e) ||
+        (channelVisible(e) && inScope(e) && (!e.isShow || includeShows) && (teams.any { teamMatches(it, e, includeShows) } || sportSelected(e.sport, e) ||
             e.series?.let { sportSelected(it, e) } == true || e.competitions.any { it.key in competitions }))
     private fun sportSelected(key: String, e: Broadcast): Boolean =
         key in sports || (!e.isShow && "$key@${e.gender}" in sports)

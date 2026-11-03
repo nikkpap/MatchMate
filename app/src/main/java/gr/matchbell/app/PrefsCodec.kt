@@ -24,6 +24,7 @@ object PrefsCodec {
         .put("quietStart", p.quietStart).put("quietEnd", p.quietEnd)
         .put("includeShows", p.includeShows).put("refreshHours", p.refreshHours).put("theme", p.theme)
         .put("palette", p.palette).put("language", p.language).put("hiddenChannels", strings(p.hiddenChannels))
+        .put("scopeGender", p.scopeGender).put("scopeSports", strings(p.scopeSports)).put("programmeView", p.programmeView)
 
     fun decode(p: JSONObject): Preferences {
         val teams = p.optJSONArray("teams") ?: JSONArray()
@@ -48,7 +49,10 @@ object PrefsCodec {
             theme = p.optString("theme", "dark").takeIf { it in Themes } ?: "dark",
             palette = p.optString("palette", "mint").takeIf { id -> PaletteIds.contains(id) } ?: "mint",
             language = p.optString("language", "el").takeIf { it in Languages } ?: "el",
-            hiddenChannels = stringSet(p, "hiddenChannels")
+            hiddenChannels = stringSet(p, "hiddenChannels"),
+            scopeGender = p.optString("scopeGender", "all").takeIf { it in Genders } ?: "all",
+            scopeSports = stringSet(p, "scopeSports"),
+            programmeView = p.optString("programmeView", "all").takeIf { it in setOf("all", "mine", "stars") } ?: "all"
         )
     }
 

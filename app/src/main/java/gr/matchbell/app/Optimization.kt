@@ -22,7 +22,7 @@ fun alarmChanges(previous: Map<String, String>, next: Map<String, String>, force
 
 /** Appearance and stars never change a reminder's timing or selection. */
 fun Preferences.reminderSettings(): Preferences =
-    copy(favorites = emptySet(), theme = "", palette = "", language = "", refreshHours = 0)
+    copy(favorites = emptySet(), theme = "", palette = "", language = "", refreshHours = 0, programmeView = "")
 
 fun backgroundSyncNeeded(prefs: Preferences, events: List<Broadcast>, now: Instant): Boolean =
     prefs.enabled && prefs.offsets.any { it in 0..1440 } &&

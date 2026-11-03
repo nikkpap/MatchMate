@@ -124,9 +124,9 @@ private const val LIVE_WINDOW_MIN = 150L
 
 @Composable fun Logo() {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(13.dp)) {
-            Icon(Icons.Rounded.NotificationsActive, null, Modifier.padding(9.dp).size(22.dp), tint = MaterialTheme.colorScheme.onPrimary)
-        }
+        // App logo (same artwork as the launcher icon).
+        androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(R.drawable.ic_launcher), null,
+            Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)))
         Spacer(Modifier.width(10.dp))
         Text("match", fontSize = 23.sp, fontWeight = FontWeight.Bold)
         Text("mate", fontSize = 23.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
@@ -177,9 +177,9 @@ private const val LIVE_WINDOW_MIN = 150L
     }
     val today = now.atZone(Athens).toLocalDate()
     var dateKey by rememberSaveable { mutableStateOf(today.toString()) }
-    var view by rememberSaveable { mutableStateOf("all") }
-    var sport by rememberSaveable { mutableStateOf("all") }
-    var gender by rememberSaveable { mutableStateOf("all") }
+    // View, men/women and sports are saved in preferences: they survive restarts and
+    // the same profile drives automatic reminders (see Preferences.inScope).
+    val view = state.prefs.programmeView
     var search by rememberSaveable { mutableStateOf("") }
     var showSearch by rememberSaveable { mutableStateOf(false) }
     var showPast by rememberSaveable { mutableStateOf(false) }
@@ -192,13 +192,12 @@ private const val LIVE_WINDOW_MIN = 150L
         state.events.filter { prefs.interested(it) }.map { it.id }.toSet()
     }
     val searchKey = remember(search) { normalized(search) }
-    val matching = remember(state.events, dateKey, view, sport, gender, searchKey, interestedIds, prefs.favorites, prefs.hiddenChannels, prefs.manual) {
+    val matching = remember(state.events, dateKey, view, prefs.scopeGender, prefs.scopeSports, searchKey, interestedIds, prefs.favorites, prefs.hiddenChannels, prefs.manual) {
         state.events.filter { e ->
             (dateKey == "week" || e.localDay == dateKey) &&
                 (prefs.channelVisible(e) || e.id in prefs.manual || e.id in prefs.favorites) &&
                 (view == "all" || (view == "mine" && e.id in interestedIds) || (view == "stars" && e.id in prefs.favorites)) &&
-                (sport == "all" || e.sport == sport || e.series == sport) &&
-                (gender == "all" || (!e.isShow && genderMatches(gender, e))) &&
+                (view == "stars" || e.id in prefs.manual || prefs.inScope(e)) &&
                 (searchKey.isBlank() || e.searchText.contains(searchKey))
         }.sortedBy { it.startsAt }
     }
@@ -295,7 +294,7 @@ private const val LIVE_WINDOW_MIN = 150L
             Row(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
                     listOf("all" to t("Όλα", "All"), "mine" to t("Για μένα", "For me"), "stars" to "★").forEachIndexed { i, (key, label) ->
-                        SegmentedButton(selected = view == key, onClick = { view = key }, shape = SegmentedButtonDefaults.itemShape(i, 3)) {
+                        SegmentedButton(selected = view == key, onClick = { update { p -> p.copy(programmeView = key) } }, shape = SegmentedButtonDefaults.itemShape(i, 3)) {
                             Text(label, maxLines = 1)
                         }
                     }
@@ -313,25 +312,8 @@ private const val LIVE_WINDOW_MIN = 150L
                 shape = RoundedCornerShape(16.dp))
         }
         item {
-            // Men / women filter: SPORT24 marks women's competitions ("Γυναικών", "WTA").
-            SingleChoiceSegmentedButtonRow(Modifier.padding(horizontal = 20.dp).fillMaxWidth()) {
-                Genders.forEachIndexed { i, g ->
-                    SegmentedButton(selected = gender == g, onClick = { gender = g }, shape = SegmentedButtonDefaults.itemShape(i, Genders.size),
-                        icon = {}) {
-                        Text(when (g) { "men" -> "♂ " + t.gender(g); "women" -> "♀ " + t.gender(g); else -> "♂♀ " + t("Όλα", "All") }, maxLines = 1)
-                    }
-                }
-            }
-        }
-        item {
-            LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                item { FilterChip(sport == "all", { sport = "all" }, label = { Text(t("Όλα τα σπορ", "All sports")) }) }
-                items(available, key = { it }) { key ->
-                    FilterChip(sport == key, { sport = if (sport == key) "all" else key },
-                        leadingIcon = { Icon(sportIcon(key), null, Modifier.size(16.dp)) },
-                        label = { Text(t.sport(key, state.events.firstOrNull { it.sport == key }?.sportLabel)) })
-                }
-            }
+            ProfileFilters(prefs, update, available.ifEmpty { listOf("podosfairo", "basket", "tennis", "volley") },
+                Modifier.padding(horizontal = 20.dp), state.events)
         }
         item {
             Row(Modifier.padding(horizontal = 20.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -673,3 +655,39 @@ fun shareText(event: Broadcast, t: Txt): String =
     }
 }
 val WomenPink = androidx.compose.ui.graphics.Color(0xFFF06292)
+
+/**
+ * The saved profile: men / women + sports. Shared by the schedule and the Following screen,
+ * and applied to automatic reminders, so "Ανδρικά + Ποδόσφαιρο" is remembered everywhere.
+ */
+@Composable fun ProfileFilters(prefs: Preferences, update: UpdatePrefs, sports: List<String>, modifier: Modifier = Modifier,
+                               events: List<Broadcast> = emptyList()) {
+    val t = LocalTxt.current
+    Column(modifier.fillMaxWidth()) {
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            Genders.forEachIndexed { i, g ->
+                SegmentedButton(selected = prefs.scopeGender == g, onClick = { update { it.copy(scopeGender = g) } },
+                    shape = SegmentedButtonDefaults.itemShape(i, Genders.size), icon = {}) {
+                    Text(when (g) { "men" -> "♂ " + t.gender(g); "women" -> "♀ " + t.gender(g); else -> "♂♀ " + t("Όλα", "All") }, maxLines = 1)
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { FilterChip(prefs.scopeSports.isEmpty(), { update { it.copy(scopeSports = emptySet()) } }, label = { Text(t("Όλα τα σπορ", "All sports")) }) }
+            // Picked sports stay visible even if they have no broadcast this week.
+            items((prefs.scopeSports.toList() + sports).distinct(), key = { it }) { key ->
+                val on = key in prefs.scopeSports
+                FilterChip(on, { update { it.copy(scopeSports = if (key in it.scopeSports) it.scopeSports - key else it.scopeSports + key) } },
+                    leadingIcon = { Icon(if (on) Icons.Rounded.Check else sportIcon(key), null, Modifier.size(16.dp)) },
+                    label = { Text(t.sport(key, events.firstOrNull { it.sport == key }?.sportLabel)) })
+            }
+        }
+        if (prefs.hasScope) {
+            Spacer(Modifier.height(4.dp))
+            Text("🔔 " + t("Αποθηκεύτηκε · ισχύει και για τις αυτόματες ειδοποιήσεις. Το κουδουνάκι σε μια μετάδοση ισχύει πάντα.",
+                "Saved · also applies to automatic reminders. A bell on a single broadcast always works."),
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
