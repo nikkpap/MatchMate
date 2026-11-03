@@ -114,7 +114,8 @@ class ReminderEngine(private val context: Context, private val store: Store) {
         val details = "🕒 ${event.local.format(TimeFormat)} · 📺 ${event.channel}"
         val competition = listOfNotNull(event.competitions.firstOrNull()?.label ?: t.sport(event.series ?: event.sport, event.sportLabel),
             if (event.isWomen) "♀ " + t("Γυναικών", "Women") else null).joinToString(" · ")
-        val notification = matchNotification(channelId, emoji, teams, competition, details, "⏰ $whenText")
+        val notification = matchNotification(channelId, emoji, teams, competition, details, "⏰ $whenText",
+            sportSmallIcon(event.series ?: event.sport))
             .setContentIntent(content)
             .setColor(paletteOf(prefs.palette).darkPrimary.toArgb())
             .setGroup("matchbell-events").setWhen(event.startsAt.toEpochMilli()).setShowWhen(true)
@@ -131,7 +132,7 @@ class ReminderEngine(private val context: Context, private val store: Store) {
      * title/text fallback for the lock screen, watches and accessibility.
      */
     private fun matchNotification(channelId: String, emoji: String, teams: String, competition: String,
-                                  details: String, whenText: String): NotificationCompat.Builder {
+                                  details: String, whenText: String, smallIcon: Int = R.drawable.ic_sport_soccer): NotificationCompat.Builder {
         val small = android.widget.RemoteViews(context.packageName, R.layout.notification_match_small).apply {
             setTextViewText(R.id.teams, "$emoji  $teams"); setTextViewText(R.id.details, "$details · $whenText")
         }
@@ -141,12 +142,39 @@ class ReminderEngine(private val context: Context, private val store: Store) {
             setTextViewText(R.id.countdown, whenText)
         }
         return NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(R.drawable.ic_notification)
+            // Per-sport icon in the status bar (and in the notification on stock Android);
+            // large colourful sport picture where the launcher/OEM shows the large icon.
+            .setSmallIcon(smallIcon).setLargeIcon(emojiBitmap(emoji))
             .setContentTitle("$emoji $teams").setContentText("$details · $whenText")
             .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .setCustomContentView(small).setCustomBigContentView(big).setCustomHeadsUpContentView(small)
             .setAutoCancel(true).setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+    }
+
+    /** Monochrome status-bar icon per sport (Android requires a white silhouette here). */
+    private fun sportSmallIcon(key: String): Int = when (key) {
+        "podosfairo", "podosfairo_salas" -> R.drawable.ic_sport_soccer
+        "basket" -> R.drawable.ic_sport_basket
+        "tennis" -> R.drawable.ic_sport_tennis
+        "volley", "handball", "polo" -> R.drawable.ic_sport_volley
+        "f1", "motogp", "mixanokinitos-athlitismos" -> R.drawable.ic_sport_flag
+        "show" -> R.drawable.ic_notification
+        else -> R.drawable.ic_sport_trophy
+    }
+
+    private val emojiCache = HashMap<String, android.graphics.Bitmap>()
+    /** Draws the colour emoji (⚽ 🏀 🎾 …) into a bitmap for setLargeIcon. */
+    private fun emojiBitmap(emoji: String): android.graphics.Bitmap = emojiCache.getOrPut(emoji) {
+        val size = 192
+        val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bmp)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = size * 0.78f; textAlign = android.graphics.Paint.Align.CENTER
+        }
+        val y = size / 2f - (paint.descent() + paint.ascent()) / 2f
+        canvas.drawText(emoji, size / 2f, y, paint)
+        bmp
     }
 
     fun testNotification(language: String = "el"): Boolean {
