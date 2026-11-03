@@ -1,0 +1,164 @@
+package gr.matchbell.app
+
+import java.text.Normalizer
+import java.time.*
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+
+val Athens: ZoneId = ZoneId.of("Europe/Athens")
+val Greek: Locale = Locale.forLanguageTag("el-GR")
+val TimeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+val FeedDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+
+private val CombiningMarks = Regex("\\p{M}+")
+private val NonLetters = Regex("[^\\p{L}\\p{N}]+")
+private val Season = Regex("\\b20\\d{2}\\s*[-/]\\s*(?:20)?\\d{2}\\b")
+private val Whitespace = Regex("\\s+")
+private val Sides = Regex("\\s+[-–—]\\s+|\\s+[vV][sS]\\.?\\s+")
+private val FormulaOne = Regex("\\b(formula 1|formula one|f1|φορμουλα 1)\\b")
+private val MotoGP = Regex("\\b(motogp|moto gp)\\b")
+
+fun normalized(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFD)
+    .replace(CombiningMarks, "").lowercase(Locale.ROOT)
+    .replace('ς', 'σ').replace(NonLetters, " ").trim()
+
+data class Tag(val key: String, val label: String)
+data class Broadcast(
+    val id: String,
+    val startsAt: Instant,
+    val title: String,
+    val channel: String,
+    val tags: List<Tag>,
+    val description: String = ""
+) {
+    val local: ZonedDateTime = startsAt.atZone(Athens)
+    val sport: String = tags.firstOrNull()?.key ?: "other"
+    val sportLabel: String = SportLabels[sport] ?: tags.firstOrNull()?.label ?: "Άλλα αθλήματα"
+    val isShow: Boolean = sport == "show"
+    val competitions: List<Tag> = tags.drop(1).filter {
+        it.key !in SportLabels && normalized(it.key) !in setOf("live", "agonas", "αγωνασ")
+    }.map { Tag(competitionKey(it.label), competitionLabel(it.label)) }.distinctBy { it.key }
+    val series: String? = run {
+        val text = normalized(title + " " + tags.joinToString { it.label })
+        when {
+            FormulaOne.containsMatchIn(text) -> "f1"
+            MotoGP.containsMatchIn(text) -> "motogp"
+            else -> null
+        }
+    }
+    val localDay: String = local.toLocalDate().toString()
+    val teamSides: Set<String> = title.split(Sides).map(::normalized).toSet()
+    val showTeamSides: Set<String> = if (isShow) teamSides + tags.flatMap { it.label.split(Sides) }.map(::normalized) else teamSides
+    val searchText: String = normalized(title + " " + channel + " " + competitions.joinToString { it.label })
+    // Distinct broadcasts stay distinct: the feed has no reliable match ID.
+    val identity: String get() = id
+}
+
+val SportLabels = linkedMapOf(
+    "podosfairo" to "Ποδόσφαιρο", "basket" to "Μπάσκετ", "tennis" to "Τένις",
+    "volley" to "Βόλεϊ", "handball" to "Χάντμπολ", "polo" to "Πόλο",
+    "mixanokinitos-athlitismos" to "Μηχανοκίνητα", "stivos" to "Στίβος",
+    "polemikes-texnes" to "Πολεμικές τέχνες", "podosfairo_salas" to "Ποδόσφαιρο σάλας",
+    "show" to "Εκπομπές", "other" to "Άλλα αθλήματα"
+)
+val SelectableSports = SportLabels.filterKeys { it != "show" }.toMutableMap().apply {
+    put("f1", "Formula 1"); put("motogp", "MotoGP")
+}
+fun sportTag(key: String, label: String): String {
+    if (key in SportLabels) return key
+    return when (normalized(label)) {
+        "ποδοσφαιρο" -> "podosfairo"
+        "μπασκετ" -> "basket"
+        "τενισ" -> "tennis"
+        "βολει" -> "volley"
+        "χαντμπολ" -> "handball"
+        "πολο" -> "polo"
+        "μηχανοκινητα", "motorsports" -> "mixanokinitos-athlitismos"
+        "στιβοσ" -> "stivos"
+        "εκπομπη", "εκπομπεσ" -> "show"
+        else -> key
+    }
+}
+fun competitionLabel(value: String): String = value
+    .replace(Season, "")
+    .replace(Whitespace, " ").trim().trim('-', '/', ' ')
+fun competitionKey(value: String): String = normalized(competitionLabel(value))
+
+data class TeamRule(val name: String, val sport: String = "all") {
+    internal val aliases: Set<String> = (TeamAliases[normalized(name)] ?: listOf(name)).map(::normalized).toSet()
+    val key: String = "${normalized(name)}|$sport"
+    val label: String = name + if (sport == "all") " · Όλα" else " · ${SportLabels[sport] ?: sport}"
+}
+val CommonTeams = listOf("ΠΑΟΚ", "Ολυμπιακός", "Παναθηναϊκός", "ΑΕΚ", "Άρης", "ΟΦΗ",
+    "Ατρόμητος", "Αστέρας Τρίπολης", "Λίβερπουλ", "Μάντσεστερ Σίτι", "Ρεάλ Μαδρίτης",
+    "Μπαρτσελόνα", "Μπάγερν Μονάχου", "Γιουβέντους", "Μιλγουόκι Μπακς", "Λος Άντζελες Λέικερς")
+private val TeamAliases = mapOf(
+    "παοκ" to listOf("ΠΑΟΚ", "PAOK", "ΠΑΟΚ mateco"),
+    "παναθηναικοσ" to listOf("Παναθηναϊκός", "Panathinaikos", "Παναθηναϊκός AKTOR"),
+    "ολυμπιακοσ" to listOf("Ολυμπιακός", "Olympiacos", "Olympiakos"),
+    "αεκ" to listOf("ΑΕΚ", "AEK", "ΑΕΚ Betsson"),
+    "αρησ" to listOf("Άρης", "Aris", "Άρης Midea"),
+    "ρεαλ μαδριτησ" to listOf("Ρεάλ Μαδρίτης", "Real Madrid"),
+    "μπαρτσελονα" to listOf("Μπαρτσελόνα", "Barcelona", "FC Barcelona")
+)
+fun teamMatches(rule: TeamRule, event: Broadcast, allowShows: Boolean = false): Boolean {
+    if (rule.sport != "all" && event.sport != rule.sport) return false
+    if (event.isShow && !allowShows) return false
+    val sides = if (event.isShow && allowShows) event.showTeamSides else event.teamSides
+    return sides.any { it in rule.aliases }
+}
+
+data class Preferences(
+    val teams: List<TeamRule> = emptyList(),
+    val sports: Set<String> = emptySet(),
+    val competitions: Set<String> = emptySet(),
+    val manual: Set<String> = emptySet(),
+    val muted: Set<String> = emptySet(),
+    val favorites: Set<String> = emptySet(),
+    val enabled: Boolean = true,
+    val offsets: Set<Int> = setOf(30),
+    val quietEnabled: Boolean = false,
+    val quietStart: Int = 23 * 60,
+    val quietEnd: Int = 8 * 60,
+    val includeShows: Boolean = false,
+    val refreshHours: Long = 6,
+    val theme: String = "dark"
+) {
+    fun interested(e: Broadcast): Boolean = e.id in manual ||
+        ((!e.isShow || includeShows) && (teams.any { teamMatches(it, e, includeShows) } || e.sport in sports ||
+            e.series?.let { it in sports } == true || e.competitions.any { it.key in competitions }))
+    fun wantsReminder(e: Broadcast): Boolean = enabled && interested(e) && e.id !in muted &&
+        (!e.isShow || includeShows || e.id in manual)
+}
+fun inQuietHours(time: Instant, prefs: Preferences): Boolean {
+    if (!prefs.quietEnabled) return false
+    val local = time.atZone(Athens).toLocalTime()
+    val minute = local.hour * 60 + local.minute
+    return when {
+        prefs.quietStart == prefs.quietEnd -> false
+        prefs.quietStart < prefs.quietEnd -> minute >= prefs.quietStart && minute < prefs.quietEnd
+        else -> minute >= prefs.quietStart || minute < prefs.quietEnd
+    }
+}
+data class Reminder(val event: Broadcast, val minutes: Int, val at: Instant) {
+    val key: String get() = "${event.id}:$minutes"
+    // Changing the source time produces a new delivery key for the same alarm slot.
+    val deliveryKey: String get() = "$key:${event.startsAt.epochSecond}"
+}
+fun planReminders(events: List<Broadcast>, prefs: Preferences, now: Instant): List<Reminder> =
+    events.filter { prefs.wantsReminder(it) && it.startsAt > now }.flatMap { event ->
+        prefs.offsets.filter { it in 0..1440 }.map { minutes ->
+            Reminder(event, minutes, event.startsAt.minusSeconds(minutes * 60L))
+        }
+    }.filter { it.at > now && !inQuietHours(it.at, prefs) }.sortedBy { it.at }
+
+data class AppSnapshot(
+    val events: List<Broadcast> = emptyList(),
+    val prefs: Preferences = Preferences(),
+    val lastSync: Instant? = null,
+    val loading: Boolean = false,
+    val error: String? = null,
+    val notificationsAllowed: Boolean = false,
+    val exactAllowed: Boolean = false,
+    val scheduled: Int = 0
+)
