@@ -37,6 +37,12 @@ import androidx.compose.ui.unit.dp
     val womenCompetitions = remember(state.events) {
         state.events.filter { it.isWomen }.flatMapTo(HashSet()) { e -> e.competitions.map { it.key } }
     }
+    // Teams playing in each competition this week, for the "only these teams" picker.
+    val competitionTeamNames = remember(state.events) {
+        val map = HashMap<String, MutableSet<String>>()
+        state.events.forEach { e -> e.competitions.forEach { c -> map.getOrPut(c.key) { HashSet() }.addAll(e.teamNames) } }
+        map.mapValues { (_, v) -> v.sortedBy { normalized(it) } }
+    }
     val competitions = remember(state.events, prefs.includeShows) {
         state.events.filter { !it.isShow || prefs.includeShows }.flatMap { it.competitions }
             .distinctBy { it.key }.sortedBy { normalized(it.label) }
@@ -153,8 +159,8 @@ import androidx.compose.ui.unit.dp
             1 -> {
                 item {
                     SectionTitle(t("Οι διοργανώσεις μου", "My competitions"),
-                        t("Οι διαθέσιμες επιλογές προκύπτουν από το τρέχον πρόγραμμα. Η επιλογή σου καλύπτει όλες τις ομάδες της διοργάνωσης.",
-                            "Options come from the current schedule. A competition covers all of its teams."))
+                        t("Τσέκαρε μια διοργάνωση και διάλεξε «Όλες οι ομάδες» ή μόνο όσες θέλεις (π.χ. Champions League → ΠΑΟΚ, ΑΕΚ). Για μία ομάδα σε όλες τις διοργανώσεις (π.χ. ΠΑΟΚ σε όλο το ανδρικό ποδόσφαιρο) χρησιμοποίησε την καρτέλα Ομάδες.",
+                            "Tick a competition, then keep “All teams” or pick only the ones you want (e.g. Champions League → ΠΑΟΚ, ΑΕΚ). For one team in every competition (e.g. ΠΑΟΚ in all men's football) use the Teams tab."))
                     Spacer(Modifier.height(12.dp))
                     SearchField(query, { query = it }, t("Αναζήτηση διοργάνωσης", "Search competitions"))
                     Spacer(Modifier.height(8.dp))
@@ -165,8 +171,9 @@ import androidx.compose.ui.unit.dp
                         Text(t("Οι επιλογές σου", "Your picks"), style = MaterialTheme.typography.titleMedium)
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                             prefs.competitions.sorted().forEach { key ->
-                                InputChip(true, { update { it.copy(competitions = it.competitions - key) } },
-                                    label = { Text(competitions.firstOrNull { it.key == key }?.label ?: key) },
+                                InputChip(true, { update { it.copy(competitions = it.competitions - key, competitionTeams = it.competitionTeams - key) } },
+                                    label = { Text((competitions.firstOrNull { it.key == key }?.label ?: key) +
+                                        (prefs.competitionTeams[key]?.takeIf { it.isNotEmpty() }?.let { " (" + it.sortedBy(::normalized).joinToString() + ")" } ?: "")) },
                                     trailingIcon = { Icon(Icons.Rounded.Close, t("Αφαίρεση διοργάνωσης", "Remove competition"), Modifier.size(15.dp)) })
                             }
                         }
@@ -178,11 +185,7 @@ import androidx.compose.ui.unit.dp
                 }
                 items(competitions.filter { normalized(it.label).contains(normalized(query)) &&
                     (compGender == "all" || (compGender == "women") == (it.key in womenCompetitions)) }, key = { it.key }) { tag ->
-                    val checked = tag.key in prefs.competitions
-                    val women = tag.key in womenCompetitions
-                    SelectRow(Icons.Rounded.EmojiEvents, tag.label, if (women) "♀ " + t("Γυναικών", "Women") else null, checked) {
-                        update { it.copy(competitions = if (tag.key in it.competitions) it.competitions - tag.key else it.competitions + tag.key) }
-                    }
+                    CompetitionRow(tag, tag.key in womenCompetitions, prefs, competitionTeamNames[tag.key].orEmpty(), update)
                 }
             }
             2 -> {
@@ -287,6 +290,49 @@ import androidx.compose.ui.unit.dp
             FilterChip(selected == g, { onSelect(g) }, label = {
                 Text(when (g) { "men" -> "♂ " + t.gender(g); "women" -> "♀ " + t.gender(g); else -> "♂♀ " + t("Όλα", "All") }, softWrap = false)
             }, leadingIcon = if (selected == g) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp)) }) else null)
+        }
+    }
+}
+
+/** A competition with an optional "only these teams" filter underneath once it is ticked. */
+@Composable private fun CompetitionRow(tag: Tag, women: Boolean, prefs: Preferences, teams: List<String>, update: UpdatePrefs) {
+    val t = LocalTxt.current
+    val checked = tag.key in prefs.competitions
+    val chosen = prefs.competitionTeams[tag.key].orEmpty()
+    Surface(shape = RoundedCornerShape(17.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+        Column {
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp)).clickable {
+                update { it.copy(competitions = if (tag.key in it.competitions) it.competitions - tag.key else it.competitions + tag.key,
+                    competitionTeams = if (tag.key in it.competitions) it.competitionTeams - tag.key else it.competitionTeams) }
+            }.padding(horizontal = 13.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.EmojiEvents, null, Modifier.size(21.dp),
+                    tint = if (checked) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(tag.label, style = MaterialTheme.typography.titleMedium)
+                    val sub = listOfNotNull(if (women) "♀ " + t("Γυναικών", "Women") else null,
+                        if (!checked) null else if (chosen.isEmpty()) t("Όλες οι ομάδες", "All teams")
+                            else t("Μόνο: ", "Only: ") + chosen.sortedBy(::normalized).joinToString())
+                    if (sub.isNotEmpty()) Text(sub.joinToString(" · "), style = MaterialTheme.typography.bodySmall,
+                        color = if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Checkbox(checked, null)
+            }
+            if (checked && (teams.isNotEmpty() || chosen.isNotEmpty())) {
+                FlowRow(Modifier.padding(start = 46.dp, end = 12.dp, bottom = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    FilterChip(chosen.isEmpty(), { update { it.copy(competitionTeams = it.competitionTeams - tag.key) } },
+                        label = { Text(t("Όλες οι ομάδες", "All teams")) })
+                    (chosen.sortedBy(::normalized) + teams).distinct().forEach { name ->
+                        val on = name in chosen
+                        FilterChip(on, { update {
+                            val current = it.competitionTeams[tag.key].orEmpty()
+                            val next = if (name in current) current - name else current + name
+                            it.copy(competitionTeams = if (next.isEmpty()) it.competitionTeams - tag.key else it.competitionTeams + (tag.key to next))
+                        } }, label = { Text(name) }, leadingIcon = if (on) ({ Icon(Icons.Rounded.Check, null, Modifier.size(16.dp)) }) else null)
+                    }
+                }
+            }
         }
     }
 }

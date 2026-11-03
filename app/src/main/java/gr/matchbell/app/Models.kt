@@ -67,6 +67,8 @@ data class Broadcast(
     }
     val localDay: String = local.toLocalDate().toString()
     val teamSides: Set<String> = title.split(Sides).map(::normalized).toSet()
+    /** Team names as written ("ΠΑΟΚ", "Ρόμα"); empty when the title is not "A - B". */
+    val teamNames: List<String> = title.split(Sides).map { it.trim() }.filter { it.isNotEmpty() }.takeIf { it.size == 2 } ?: emptyList()
     val showTeamSides: Set<String> = if (isShow) teamSides + tags.flatMap { it.label.split(Sides) }.map(::normalized) else teamSides
     val searchText: String = normalized(title + " " + channel + " " + competitions.joinToString { it.label } +
         if (isWomen) " γυναικων γυναικεια women" else "")
@@ -172,8 +174,19 @@ data class Preferences(
     val scopeGender: String = "all",
     val scopeSports: Set<String> = emptySet(),
     /** Last schedule view (all / mine / stars), remembered between launches. */
-    val programmeView: String = "all"
+    val programmeView: String = "all",
+    /**
+     * Optional team filter per competition: competition key -> team names.
+     * Missing / empty = every team of that competition (the 0.3 behaviour).
+     */
+    val competitionTeams: Map<String, Set<String>> = emptyMap()
 ) {
+    private val competitionRules: Map<String, List<TeamRule>> =
+        competitionTeams.filterValues { it.isNotEmpty() }.mapValues { (_, names) -> names.map { TeamRule(it) } }
+    /** Competition selected, and (if a team filter exists) one of its teams plays. */
+    fun competitionMatches(e: Broadcast): Boolean = e.competitions.any { c ->
+        c.key in competitions && (competitionRules[c.key]?.any { teamMatches(it, e, includeShows) } ?: true)
+    }
     fun inScope(e: Broadcast): Boolean =
         (scopeSports.isEmpty() || e.isShow || e.sport in scopeSports || e.series in scopeSports) &&
             (scopeGender == "all" || (!e.isShow && genderMatches(scopeGender, e)) || (e.isShow && scopeGender != "women"))
@@ -181,7 +194,7 @@ data class Preferences(
     fun channelVisible(e: Broadcast): Boolean = e.channel !in hiddenChannels
     fun interested(e: Broadcast): Boolean = e.id in manual ||
         (channelVisible(e) && inScope(e) && (!e.isShow || includeShows) && (teams.any { teamMatches(it, e, includeShows) } || sportSelected(e.sport, e) ||
-            e.series?.let { sportSelected(it, e) } == true || e.competitions.any { it.key in competitions }))
+            e.series?.let { sportSelected(it, e) } == true || competitionMatches(e)))
     private fun sportSelected(key: String, e: Broadcast): Boolean =
         key in sports || (!e.isShow && "$key@${e.gender}" in sports)
     /** The gender chosen for a sport: "all" / "men" / "women", or null when the sport is off. */

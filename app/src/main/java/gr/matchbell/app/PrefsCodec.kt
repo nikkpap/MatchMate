@@ -25,6 +25,7 @@ object PrefsCodec {
         .put("includeShows", p.includeShows).put("refreshHours", p.refreshHours).put("theme", p.theme)
         .put("palette", p.palette).put("language", p.language).put("hiddenChannels", strings(p.hiddenChannels))
         .put("scopeGender", p.scopeGender).put("scopeSports", strings(p.scopeSports)).put("programmeView", p.programmeView)
+        .put("competitionTeams", JSONObject().also { o -> p.competitionTeams.forEach { (k, v) -> if (v.isNotEmpty()) o.put(k, strings(v)) } })
 
     fun decode(p: JSONObject): Preferences {
         val teams = p.optJSONArray("teams") ?: JSONArray()
@@ -52,7 +53,10 @@ object PrefsCodec {
             hiddenChannels = stringSet(p, "hiddenChannels"),
             scopeGender = p.optString("scopeGender", "all").takeIf { it in Genders } ?: "all",
             scopeSports = stringSet(p, "scopeSports"),
-            programmeView = p.optString("programmeView", "all").takeIf { it in setOf("all", "mine", "stars") } ?: "all"
+            programmeView = p.optString("programmeView", "all").takeIf { it in setOf("all", "mine", "stars") } ?: "all",
+            competitionTeams = p.optJSONObject("competitionTeams")?.let { o ->
+                o.keys().asSequence().associateWith { stringSet(o, it) }.filterValues { it.isNotEmpty() }
+            } ?: emptyMap()
         )
     }
 
