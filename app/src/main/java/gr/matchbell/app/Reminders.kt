@@ -143,8 +143,8 @@ class ReminderEngine(private val context: Context, private val store: Store) {
         val full = if (sides.size == 2) sides.joinToString(" – ") else title
         val split = sides.size == 2 && full.length > MaxTitle
         val bigTitle = "$emoji " + if (split) sides[0] else full
-        // A thin divider between the teams and the details (Samsung drops blank lines in the body).
-        val lines = listOfNotNull(if (split) "🆚 ${sides[1]}" else null, "────────────", "🏆 $competition", details, whenText)
+        // A lone dot acts as a blank-line placeholder after the teams (Samsung drops truly empty lines).
+        val lines = listOfNotNull(if (split) "🆚 ${sides[1]}" else null, ".", "🏆 $competition", details, whenText)
         return NotificationCompat.Builder(context, channelId)
             .setSmallIcon(smallIcon)
             .setContentTitle("$emoji $full")
