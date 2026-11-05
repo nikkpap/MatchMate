@@ -97,8 +97,8 @@ class ReminderEngine(private val context: Context, private val store: Store) {
         val t = txtFor(prefs.language)
         // Round up so a 30-minute reminder fired a few seconds late still says "30", not "29".
         val remaining = ((event.startsAt.toEpochMilli() - now.toEpochMilli() + 59_999) / 60000).coerceAtLeast(0)
-        val whenText = if (remaining == 0L) t("Η μετάδοση ξεκινά τώρα", "Starting now")
-            else t("Η μετάδοση ξεκινά σε $remaining λεπτά", "Starts in $remaining minutes")
+        val whenText = if (remaining == 0L) t("Ξεκινά τώρα!", "Starting now!")
+            else t("Ξεκινά σε $remaining λεπτά", "Starts in $remaining minutes")
         val channelId = "sport-${event.series ?: event.sport}"
         if (manager.getNotificationChannel(channelId)?.importance == NotificationManager.IMPORTANCE_NONE) return null
         val intent = Intent(context, MainActivity::class.java).putExtra("eventId", event.id)
@@ -128,26 +128,27 @@ class ReminderEngine(private val context: Context, private val store: Store) {
         } catch (_: SecurityException) { return null }
     }
     /**
-     * Reminder look: sport emoji + teams in large bold text (custom layout), with a plain
-     * title/text fallback for the lock screen, watches and accessibility.
+     * Reminder look, using the standard Android template (full width, wraps on whole words —
+     * custom layouts were squeezed on Samsung One UI and cut team names mid-word):
+     *  collapsed: "⚽ Παναθηναϊκός – ΤΣΣΚΑ Σόφιας" (bold) / "🕒 22:00 · 📺 Magenta Sport 3"
+     *  expanded:  title "⚽ UEFA Conference League", body = teams in large bold (wrapping), time · channel, ⏰ countdown.
      */
     private fun matchNotification(channelId: String, emoji: String, teams: String, competition: String,
                                   details: String, whenText: String, smallIcon: Int = R.drawable.ic_sport_soccer): NotificationCompat.Builder {
-        val small = android.widget.RemoteViews(context.packageName, R.layout.notification_match_small).apply {
-            setTextViewText(R.id.teams, "$emoji  $teams"); setTextViewText(R.id.details, "$details · $whenText")
+        fun bold(text: CharSequence, scale: Float = 1f) = android.text.SpannableString(text).apply {
+            setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), 0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (scale != 1f) setSpan(android.text.style.RelativeSizeSpan(scale), 0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-        val big = android.widget.RemoteViews(context.packageName, R.layout.notification_match_big).apply {
-            setTextViewText(R.id.emoji, emoji); setTextViewText(R.id.teams, teams)
-            setTextViewText(R.id.competition, competition); setTextViewText(R.id.details, details)
-            setTextViewText(R.id.countdown, whenText)
-        }
+        val body = android.text.SpannableStringBuilder()
+            .append(bold(teams, 1.3f)).append("\n")
+            .append(details).append("\n")
+            .append(bold(whenText))
         return NotificationCompat.Builder(context, channelId)
-            // Per-sport icon in the status bar (and in the notification on stock Android);
-            // large colourful sport picture where the launcher/OEM shows the large icon.
-            .setSmallIcon(smallIcon).setLargeIcon(emojiBitmap(emoji))
-            .setContentTitle("$emoji $teams").setContentText("$details · $whenText")
-            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
-            .setCustomContentView(small).setCustomBigContentView(big).setCustomHeadsUpContentView(small)
+            // Per-sport white icon in the status bar; no large icon (it duplicated the ball and stole width).
+            .setSmallIcon(smallIcon)
+            .setContentTitle(bold("$emoji $teams"))
+            .setContentText(details)
+            .setStyle(NotificationCompat.BigTextStyle().setBigContentTitle("$emoji $competition").bigText(body))
             .setAutoCancel(true).setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
     }
@@ -163,20 +164,6 @@ class ReminderEngine(private val context: Context, private val store: Store) {
         else -> R.drawable.ic_sport_trophy
     }
 
-    private val emojiCache = HashMap<String, android.graphics.Bitmap>()
-    /** Draws the colour emoji (⚽ 🏀 🎾 …) into a bitmap for setLargeIcon. */
-    private fun emojiBitmap(emoji: String): android.graphics.Bitmap = emojiCache.getOrPut(emoji) {
-        val size = 192
-        val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(bmp)
-        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = size * 0.78f; textAlign = android.graphics.Paint.Align.CENTER
-        }
-        val y = size / 2f - (paint.descent() + paint.ascent()) / 2f
-        canvas.drawText(emoji, size / 2f, y, paint)
-        bmp
-    }
-
     fun testNotification(language: String = "el"): Boolean {
         val t = txtFor(language)
         createChannels(language = language)
@@ -186,9 +173,9 @@ class ReminderEngine(private val context: Context, private val store: Store) {
         val content = PendingIntent.getActivity(context, 991, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return try {
             // Preview of a real reminder, so the user sees the final look.
-            manager.notify("test", 1, matchNotification("sport-test", "⚽", "ΠΑΟΚ  –  ΑΕΚ",
+            manager.notify("test", 1, matchNotification("sport-test", "⚽", "ΠΑΟΚ – ΑΕΚ",
                 t("Δοκιμαστική ειδοποίηση · Stoiximan Super League", "Test notification · Stoiximan Super League"),
-                "🕒 21:00 · 📺 Novasports Prime", "⏰ " + t("Η μετάδοση ξεκινά σε 30 λεπτά", "Starts in 30 minutes"))
+                "🕒 21:00 · 📺 Novasports Prime", "⏰ " + t("Ξεκινά σε 30 λεπτά", "Starts in 30 minutes"))
                 .setContentIntent(content).build())
             true
         } catch (_: SecurityException) { false }

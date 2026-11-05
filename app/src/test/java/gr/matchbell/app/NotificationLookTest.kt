@@ -19,7 +19,7 @@ class NotificationLookTest {
         assertEquals("🏎️", sportEmoji(f1.series ?: f1.sport, f1.sportLabel))
     }
     @Test fun matchTitleSpacesTheTeams() {
-        assertEquals("ΠΑΟΚ  –  Ρεάλ Μαδρίτης", matchTitle(e("ΠΑΟΚ - Ρεάλ Μαδρίτης", "podosfairo" to "Ποδόσφαιρο")))
+        assertEquals("ΠΑΟΚ – Ρεάλ Μαδρίτης", matchTitle(e("ΠΑΟΚ - Ρεάλ Μαδρίτης", "podosfairo" to "Ποδόσφαιρο")))
         assertEquals("WTA Finals", matchTitle(e("WTA Finals", "tennis" to "Τένις")))
     }
 }

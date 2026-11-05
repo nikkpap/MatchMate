@@ -84,4 +84,4 @@ fun sportEmoji(key: String, label: String = ""): String = when (key) {
 }
 
 /** "ΠΑΟΚ - Ρεάλ" → "ΠΑΟΚ – Ρεάλ" (en dash reads better in big bold text). */
-fun matchTitle(e: Broadcast): String = if (e.teamNames.size == 2) e.teamNames.joinToString("  –  ") else e.title
+fun matchTitle(e: Broadcast): String = if (e.teamNames.size == 2) e.teamNames.joinToString(" – ") else e.title
