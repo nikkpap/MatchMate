@@ -13,6 +13,9 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
 import java.time.Instant
 
+/** Longest "Home – Away" that still fits one bold title line on a phone. */
+private const val MaxTitle = 30
+
 class ReminderEngine(private val context: Context, private val store: Store) {
     private val alarm = context.getSystemService(AlarmManager::class.java)
     private val manager = context.getSystemService(NotificationManager::class.java)
@@ -110,11 +113,10 @@ class ReminderEngine(private val context: Context, private val store: Store) {
             .setData(Uri.Builder().scheme("matchbell").authority("mute").appendPath(event.id).build()),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val emoji = sportEmoji(event.series ?: event.sport, event.sportLabel)
-        val teams = matchTitle(event)
         val details = "🕒 ${event.local.format(TimeFormat)} · 📺 ${event.channel}"
         val competition = listOfNotNull(event.competitions.firstOrNull()?.label ?: t.sport(event.series ?: event.sport, event.sportLabel),
             if (event.isWomen) "♀ " + t("Γυναικών", "Women") else null).joinToString(" · ")
-        val notification = matchNotification(channelId, emoji, teams, competition, details, "⏰ $whenText",
+        val notification = matchNotification(channelId, emoji, event.teamNames, event.title, competition, details, "⏰ $whenText",
             sportSmallIcon(event.series ?: event.sport))
             .setContentIntent(content)
             .setColor(paletteOf(prefs.palette).darkPrimary.toArgb())
@@ -128,27 +130,25 @@ class ReminderEngine(private val context: Context, private val store: Store) {
         } catch (_: SecurityException) { return null }
     }
     /**
-     * Reminder look, using the standard Android template (full width, wraps on whole words —
-     * custom layouts were squeezed on Samsung One UI and cut team names mid-word):
-     *  collapsed: "⚽ Παναθηναϊκός – ΤΣΣΚΑ Σόφιας" (bold) / "🕒 22:00 · 📺 Magenta Sport 3"
-     *  expanded:  title "⚽ UEFA Conference League", body = teams in large bold (wrapping), time · channel, ⏰ countdown.
+     * Reminder look (standard template; Samsung ignores size/bold spans in the body, but always
+     * shows the TITLE big and bold — so the title is the match itself):
+     *   **⚽ Παναθηναϊκός – ΤΣΣΚΑ Σόφιας**
+     *   🏆 UEFA Conference League
+     *   🕒 22:00 · 📺 Magenta Sport 4
+     *   ⏰ Ξεκινά σε 30 λεπτά
+     * A pairing too long for one title line becomes "⚽ Home" + "🆚 Away" so nothing is cut.
      */
-    private fun matchNotification(channelId: String, emoji: String, teams: String, competition: String,
+    private fun matchNotification(channelId: String, emoji: String, sides: List<String>, title: String, competition: String,
                                   details: String, whenText: String, smallIcon: Int = R.drawable.ic_sport_soccer): NotificationCompat.Builder {
-        fun bold(text: CharSequence, scale: Float = 1f) = android.text.SpannableString(text).apply {
-            setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), 0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            if (scale != 1f) setSpan(android.text.style.RelativeSizeSpan(scale), 0, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        }
-        val body = android.text.SpannableStringBuilder()
-            .append(bold(teams, 1.3f)).append("\n")
-            .append(details).append("\n")
-            .append(bold(whenText))
+        val full = if (sides.size == 2) sides.joinToString(" – ") else title
+        val split = sides.size == 2 && full.length > MaxTitle
+        val bigTitle = "$emoji " + if (split) sides[0] else full
+        val lines = listOfNotNull(if (split) "🆚 ${sides[1]}" else null, "🏆 $competition", details, whenText)
         return NotificationCompat.Builder(context, channelId)
-            // Per-sport white icon in the status bar; no large icon (it duplicated the ball and stole width).
             .setSmallIcon(smallIcon)
-            .setContentTitle(bold("$emoji $teams"))
+            .setContentTitle("$emoji $full")
             .setContentText(details)
-            .setStyle(NotificationCompat.BigTextStyle().setBigContentTitle("$emoji $competition").bigText(body))
+            .setStyle(NotificationCompat.BigTextStyle().setBigContentTitle(bigTitle).bigText(lines.joinToString("\n")))
             .setAutoCancel(true).setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
     }
@@ -173,7 +173,7 @@ class ReminderEngine(private val context: Context, private val store: Store) {
         val content = PendingIntent.getActivity(context, 991, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return try {
             // Preview of a real reminder, so the user sees the final look.
-            manager.notify("test", 1, matchNotification("sport-test", "⚽", "ΠΑΟΚ – ΑΕΚ",
+            manager.notify("test", 1, matchNotification("sport-test", "⚽", listOf("ΠΑΟΚ", "ΑΕΚ"), "ΠΑΟΚ - ΑΕΚ",
                 t("Δοκιμαστική ειδοποίηση · Stoiximan Super League", "Test notification · Stoiximan Super League"),
                 "🕒 21:00 · 📺 Novasports Prime", "⏰ " + t("Ξεκινά σε 30 λεπτά", "Starts in 30 minutes"))
                 .setContentIntent(content).build())
